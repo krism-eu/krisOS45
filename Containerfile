@@ -58,7 +58,7 @@ COPY build_files/90-krisos-privacy.repo /etc/dnf/repos.override.d/90-krisos-priv
 COPY build_files/KDE-UserFeedback.conf /etc/xdg/KDE/UserFeedback.conf
 
 # Immutable KrisOS package delta. Fedora owns every RPM already present in
-# the pinned bootc base: exclude those names from the layering transaction and
+# the resolved Fedora bootc base: exclude those names from the layering transaction and
 # verify their exact installed EVRAs are unchanged afterwards. If the desktop
 # requires a newer Fedora-owned RPM, the build must fail and the base digest
 # must move forward instead.
@@ -72,7 +72,7 @@ RUN set -eux; \
     test -s /tmp/fedora-base-names.txt; \
     for pkg in bootc bootupd dracut ostree systemd rpm dnf5 kernel-core; do \
       if ! grep -Fxq "$pkg" /tmp/fedora-base-names.txt; then \
-        echo "Pinned Fedora base sanity check failed: missing $pkg" >&2; \
+        echo "Resolved Fedora base sanity check failed: missing $pkg" >&2; \
         exit 1; \
       fi; \
     done; \
@@ -295,7 +295,7 @@ RUN set -eux; \
     matchpathcon -n /var/home/kris/.config | grep -q ':config_home_t:'; \
     matchpathcon -n /var/home/kris/.local/share | grep -q ':data_home_t:'
 
-# Snapshot every immutable package name owned by the final image: pinned Fedora
+# Snapshot every immutable package name owned by the final image: resolved Fedora
 # base plus the KrisOS delta. RPM key pseudo-packages are deliberately not
 # package-ownership policy; M1 handles repository/key trust separately.
 RUN set -eux; \

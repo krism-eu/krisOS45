@@ -88,11 +88,7 @@ transazione libdnf5/RPM in container, cattura la provenance pacchetti e, sul
 percorso publish, pubblica un tag per commit, firma il digest con Cosign e
 verifica il pull anonimo.
 
-Il componente image-owned è congelato su `krisCC 0.7.10-1.fc45` mentre il lavoro applicativo prosegue separatamente
-con la precedente release. È l'eccezione nota del port F45: il successivo lavoro
-sul componente deve produrre un RPM `fc45` con firma/provenance verificabile e
-rimuovere l'uso locale di `rpm --nosignature`. Questa eccezione non modifica la
-policy di firma di DNF/`rk`.
+Il componente image-owned è congelato su `krisCC 0.7.10-1.fc45` mentre il lavoro applicativo prosegue separatamente. Finché krisCC non viene dichiarato definitivo, le sue prove restano manuali e non innescano nuove immagini KrisOS. L'RPM release è integrità-pinned per SHA-256 e installato con l'eccezione locale `rpm --nosignature`; questa eccezione non modifica la policy di firma di DNF/`rk`.
 
 ## Validazione VM
 
