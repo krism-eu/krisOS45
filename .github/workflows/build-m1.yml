@@ -16,7 +16,7 @@ on:
         required: false
         type: string
       publish:
-        description: "Publish this validated payload commit as an immutable candidate"
+        description: "Publish this validated build as an immutable candidate"
         required: false
         type: boolean
         default: false
@@ -133,7 +133,6 @@ jobs:
           grep -Fq 'upper_sentinel="/var/lib/krisos/upper/share/krisos-e2e/' tests/release-check.sh
           grep -Fq 'verify-switch' tests/run-release-vm.sh
           grep -Fq 'overlay cache missing or invalid' systemd/krisos-overlay.sh
-          ! grep -Fq 'status" \n        "python3' tests/boot-check.sh
           grep -Fq "document['status']['booted']['ostree']" tests/release-state.py
           test -x bin/rk
           test -x scripts/fetch-kriscc-component.sh
@@ -150,7 +149,11 @@ jobs:
           grep -Fq 'packages: write' .github/workflows/build-m1.yml
           grep -Fq 'pull-requests: write' .github/workflows/sync-kriscc.yml
           ! grep -Fq 'gh workflow run' .github/workflows/sync-kriscc.yml
-          grep -Fq 'Require protected stable-promotion environment' .github/workflows/promote-m1.yml
+          test ! -e .github/workflows/promote-m1.yml
+          grep -Fxq '__pycache__/' .gitignore
+          grep -Fxq '*.pyc' .gitignore
+          grep -Fxq 'build_files/krisCC/' .gitignore
+          grep -Fq 'test "$kernel_count" -eq 1' Containerfile
           grep -Fq 'After=ostree-remount.service' systemd/krisos-overlay.service
           grep -Fq 'Before=local-fs.target shutdown.target' systemd/krisos-overlay.service
           grep -Fq 'TimeoutStartSec=10min' systemd/krisos-overlay.service
@@ -199,6 +202,8 @@ jobs:
 
       - name: Fetch verified krisCC component
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           source build_files/krisCC.lock
@@ -337,7 +342,7 @@ jobs:
               printf 'Previous m1 exists but could not be pulled for drift comparison.\n' > package-drift.txt
             fi
           else
-            printf 'No promoted m1 baseline was available for package drift comparison.\n' > package-drift.txt
+            printf 'No previous m1 baseline was available for package drift comparison.\n' > package-drift.txt
           fi
 
       - name: Real RPM package layer integration
@@ -349,9 +354,9 @@ jobs:
             --entrypoint python3 localhost/krisos45:m1 /tmp/test-rk.py \
             2>&1 | tee rk-integration.log
 
-      # PRs and pushes are validation-only. Scheduled/manual publish dispatches
-      # rebuild from the current Fedora 45 Minimal base and advance m1 only after
-      # the complete image and rk integration gates pass.
+      # Pull requests are validation-only. Pushes on main, scheduled runs and
+      # explicit publish dispatches rebuild from Fedora 45 Minimal and advance
+      # m1 only after the complete image and rk integration gates pass.
       - name: Install Cosign
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.base_image == ''))
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -375,7 +380,7 @@ jobs:
           set -euo pipefail
           immutable="ghcr.io/krism-eu/krisos45:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           if skopeo inspect --authfile "$HOME/.docker/config.json" "docker://$immutable" >/dev/null 2>&1; then
-            echo "Immutable commit tag already exists; refusing to overwrite: $immutable" >&2
+            echo "Immutable build tag already exists; refusing to overwrite: $immutable" >&2
             exit 1
           fi
           sudo podman tag localhost/krisos45:m1 "$immutable"
