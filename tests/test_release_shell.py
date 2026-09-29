@@ -155,11 +155,7 @@ esac
         build = (ROOT / '.github/workflows/build-m1.yml').read_text()
         sync = (ROOT / '.github/workflows/sync-kriscc.yml').read_text()
         self.assertIn('group: build-m1-${{ github.ref }}', build)
-        self.assertIn("expected = 'group: build-m1-
-
-if __name__ == '__main__':
-    unittest.main()
- + '{{ github.ref }}'", build)
+        self.assertIn("expected = 'group: build-m1-$' + '{{ github.ref }}'", build)
         self.assertNotIn("grep -Fq 'group: build-m1-${{ github.ref }}'", build)
         self.assertIn('packages: write', build)
         self.assertIn('pull-requests: write', sync)
