@@ -1,7 +1,7 @@
 # Fedora 45 port checkpoints
 
-Questa branch deriva dalla `main` Fedora 44 e conserva lo stesso
-contratto OSTree e lo stesso lifecycle dell'OverlayFS persistente su `/usr`.
+Il port Fedora 45 conserva il contratto OSTree e lo stesso lifecycle
+dell'OverlayFS persistente su `/usr`.
 Il port non modifica l'identità della cache: resta
 `STATEROOT/OSTREE_COMMIT/DEPLOYSERIAL`.
 
@@ -27,17 +27,18 @@ nella branch ISO.
 
 ## Base e provenance
 
-La Fedora 45 Minimal è fissata a:
+Durante Fedora 45 Branched la build segue:
 
 ```text
 quay.io/bootc-devel/fedora-bootc-45-minimal:latest
 ```
 
-Il digest rende immutabile la base, non l'intero dependency closure del build:
+A ogni run `:latest` viene risolta a un digest preciso. Quel digest rende
+immutabile la base usata da quel run, non l'intero dependency closure del build:
 il delta KrisOS e lo stage `linux-firmware` vengono ancora risolti dai repository
 Fedora firmati disponibili al momento della build. La CI deve quindi pubblicare
 `owned-nevra.txt`, la NEVRA sorgente del firmware RTL e un diff contro il
-payload `m1` promosso. Questi dati rendono la deriva visibile; non costituiscono
+payload `m1` precedente. Questi dati rendono la deriva visibile; non costituiscono
 una pretesa di build bit-for-bit riproducibile.
 
 ## Stato dei gate
@@ -59,7 +60,7 @@ lock SHA-256. Fedora 45/RPM 6 richiede la verifica firma per default e il vecchi
 artefatto non è firmato, quindi il Containerfile mantiene una singola eccezione
 `--nosignature` limitata a quel file dopo il controllo del lock.
 
-Questa è una compatibilità temporanea, non il contratto definitivo F45. Il
-prossimo rebuild del componente deve essere `fc45`, con firma RPM e/o
-attestazione di provenance verificata, e deve permettere di rimuovere
+Questa è una compatibilità temporanea limitata alla firma dell'asset custom:
+il componente è già un RPM Fedora 45. Quando krisCC verrà dichiarato definitivo,
+l'RPM dovrà avere firma nativa e/o provenance verificabile così da poter rimuovere
 `--nosignature`. La policy DNF/`rk` continua nel frattempo a richiedere firme.
