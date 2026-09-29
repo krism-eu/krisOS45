@@ -27,4 +27,4 @@ jobs:
           grep -Fxq 'ARG ANACONDA_NEVR=45.27-1.fc45' installer/Containerfile
           grep -Fq 'ghcr.io/krism-eu/krisos45:' .github/workflows/build-k1-final-iso.yml
           grep -Fq 'krism-eu/krisOS45/.github/workflows/build-m1.yml@refs/heads/k1.0-final-payload' .github/workflows/build-k1-final-iso.yml
-          ! grep -R -F '45.25-1.fc45' . --exclude-dir=.git
+          ! grep -R -F '45.25-1.fc45' . --exclude-dir=.git --exclude=validate-f45-iso-port.yml
