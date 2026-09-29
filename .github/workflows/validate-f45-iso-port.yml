@@ -21,6 +21,8 @@ jobs:
           bash -n installer/build-installer.sh
           bash -n installer/krisos-fstab-finalize.ks
           bash -n installer/krisos-home-labels-finalize.ks
+          bash -n tests/k1-final-contract.sh
+          bash tests/k1-final-contract.sh
           grep -Fxq 'FROM quay.io/fedora/fedora-bootc:45' installer/Containerfile
           grep -Fxq 'ARG ANACONDA_NEVR=45.25-1.fc45' installer/Containerfile
           grep -Fq 'bootc-generic-iso' installer/build-installer.sh

@@ -81,7 +81,6 @@ jobs:
           source build_files/KrisOS-payload.lock
           [[ "$KRISOS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:$KRISOS_COMMIT" ]]
-          git cat-file -e "$KRISOS_COMMIT^{commit}" 2>/dev/null || true
           [[ "$KRISOS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$KRISOS_KRISCC" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc(44|45)\.x86_64$ ]]
 

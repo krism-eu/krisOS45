@@ -11,9 +11,9 @@ EVRA. It verifies the registry manifest and the KrisOS45 payload Build M1 Cosign
 pulls by digest, checks the OCI revision label and inspects the payload before
 building the installer.
 
-The current lock is the payload branch `6212322d22ccf170562976bef3c288d531f98bb2`,
-digest `sha256:7f1e12e8fbf3b94acb389045dc920d30d998458ca170453a8493810ffdebecff`,
-with krisCC `0.7.0-4.fc44.x86_64`.
+The current lock is payload commit `650786a97209bed438a29d5c4a42c7344ca1842d`,
+manifest `sha256:08f98504645b99a5d685b67ebe4d1a6f14ece9dd7799a0daf7315baf57782581`,
+with krisCC `0.7.9-1.fc44.x86_64`.
 
 ## Installer contract
 
