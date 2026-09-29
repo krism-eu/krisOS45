@@ -27,6 +27,13 @@ Le transazioni vuote vengono cortocircuitate dopo il solver: l'intent può esser
 aggiornato, ma non viene creato `pending` e non viene chiamato `tx.run()` su una
 transaction priva di package items.
 
+La rimozione usa intenzionalmente `clean_requirements_on_remove = False`.
+`rk rm` rimuove quindi solo la richiesta esplicita validata; eventuali dipendenze
+diventate orfane possono restare nell'upper corrente. Al successivo cambio
+deployment `upper/` e `work/` vengono ricreati e `rk sync` ricostruisce soltanto
+le richieste persistite in `packages.list` con il grafo di dipendenze corrente,
+eliminando naturalmente quegli orfani.
+
 ## Payload consentito
 
 Un RPM entrante deve avere payload canonico sotto `/usr`, non può sovrascrivere
