@@ -1,0 +1,108 @@
+FROM quay.io/fedora/fedora-bootc:45
+
+ARG KRISOS_PAYLOAD_REF
+ARG ANACONDA_NEVR=45.25-1.fc45
+
+# Fedora 45 Anaconda runtime for the recommended bootc-generic-iso image type.
+# The exact validated KrisOS payload reference is written into Anaconda's
+# interactive defaults and embedded into the final ISO.
+RUN dnf install -qy --setopt=install_weak_deps=False \
+    anaconda-${ANACONDA_NEVR} \
+    anaconda-install-env-deps-${ANACONDA_NEVR} \
+    anaconda-install-img-deps-${ANACONDA_NEVR} \
+    anaconda-dracut-${ANACONDA_NEVR} \
+    dracut-config-generic \
+    dracut-network \
+    net-tools \
+    squashfs-tools \
+    grub2-efi-x64-cdboot \
+    plymouth \
+    default-fonts-core-sans \
+    default-fonts-other-sans \
+    google-noto-sans-cjk-fonts \
+    python3-mako \
+    lorax-templates-generic \
+    biosdevname \
+    prefixdevname \
+    xorriso \
+    isomd5sum \
+    && for pkg in anaconda anaconda-core anaconda-gui anaconda-tui anaconda-install-env-deps anaconda-install-img-deps anaconda-dracut; do \
+         test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$pkg")" = "$ANACONDA_NEVR"; \
+       done \
+    && grep -Fxq 'Alias=autovt@.service' /usr/lib/systemd/system/anaconda-shell@.service \
+    && grep -Fxq 'DefaultInstance=tty2' /usr/lib/systemd/system/anaconda-shell@.service \
+    && grep -Fxq 'ReserveVT=2' /usr/lib/systemd/logind.conf.d/anaconda-logind.conf \
+    && grep -Fxq 'StandardInput=null' /usr/lib/systemd/system/anaconda-pre.service \
+    && dnf clean all
+
+# Fedora 43+ bootc installer images need the EFI tree materialized here.
+RUN mkdir -p /boot/efi && cp -ra /usr/lib/efi/*/*/EFI /boot/efi
+
+# Lorax creates links below /mnt that point into /var/mnt.
+RUN mkdir -p /var/mnt
+
+# Keep KrisOS branding/boot metadata separate from the payload selection.
+RUN mkdir -p /usr/lib/image-builder/bootc
+COPY iso.yaml /usr/lib/image-builder/bootc/iso.yaml
+
+# Interactive defaults only: preselect payload and localization, never
+# partitioning, credentials, completion actions or unattended mode.
+RUN test -n "$KRISOS_PAYLOAD_REF" && \
+    printf '%s\n' \
+    'graphical' \
+    'lang it_IT.UTF-8' \
+    'keyboard --vckeymap=it --xlayouts=it' \
+    'timezone Europe/Rome --utc' \
+    'selinux --enforcing' \
+    "bootc --source-imgref=registry:$KRISOS_PAYLOAD_REF --target-imgref=$KRISOS_PAYLOAD_REF" \
+    > /usr/share/anaconda/interactive-defaults.ks && \
+    ! grep -Eq '^[[:space:]]*(clearpart|autopart|part|partition|logvol|volgroup|user|rootpw|reboot|shutdown)([[:space:]]|$)' \
+      /usr/share/anaconda/interactive-defaults.ks
+
+# Installer-only finalization. Keep the live/target SELinux mode and interactive
+# partitioning flow unchanged; only reconcile the two host-specific states that
+# were proven during acceptance: bootc's fstab marker and, conditionally, the
+# four fresh-home SELinux labels through the payload's conservative helper.
+COPY krisos-fstab-finalize.ks /usr/share/anaconda/krisos-fstab-finalize.ks
+COPY krisos-home-labels-finalize.ks /usr/share/anaconda/krisos-home-labels-finalize.ks
+RUN cat \
+      /usr/share/anaconda/krisos-fstab-finalize.ks \
+      /usr/share/anaconda/krisos-home-labels-finalize.ks \
+      >> /usr/share/anaconda/interactive-defaults.ks && \
+    test "$(grep -c '^%post --nochroot --erroronfail$' /usr/share/anaconda/interactive-defaults.ks)" -eq 2 && \
+    test "$(grep -c '^%end$' /usr/share/anaconda/interactive-defaults.ks)" -eq 2
+
+# bootc-generic-iso does not run Lorax for us. These are the upstream-required
+# live-Anaconda runtime preparations; without them the ISO can build cleanly
+# but fail after boot with Anaconda's fatal error screen.
+RUN echo "install:x:0:0:root:/root:/usr/libexec/anaconda/run-anaconda" >> /etc/passwd && \
+    echo "install::14438:0:99999:7:::" >> /etc/shadow && \
+    passwd -d root
+
+RUN mv /usr/share/anaconda/list-harddrives-stub /usr/bin/list-harddrives && \
+    mv /etc/yum.repos.d /etc/anaconda.repos.d && \
+    ln -sf /lib/systemd/system/anaconda.target /etc/systemd/system/default.target && \
+    rm -f /usr/lib/systemd/system-generators/systemd-gpt-auto-generator
+
+# Anaconda 45.25 carries the autovt alias/default instance and logind drop-in.
+# Enable the upstream unit so systemd materializes those [Install] contracts;
+# do not recreate either file locally.
+RUN systemctl enable anaconda-shell@.service && \
+    test "$(readlink -f /etc/systemd/system/autovt@.service)" = "/usr/lib/systemd/system/anaconda-shell@.service" && \
+    test -L /etc/systemd/system/anaconda.target.wants/anaconda-shell@tty2.service
+
+# /root resolves into /var on bootc/OSTree. Rebuild the installer initramfs
+# after the runtime setup so the Anaconda dracut module is actually present.
+RUN mkdir -p "$(realpath /root)" && \
+    kernel="$(kernel-install list --json pretty | jq -r '.[] | select(.has_kernel == true) | .version' | head -n1)" && \
+    test -n "$kernel" && \
+    DRACUT_NO_XATTR=1 dracut --force -v --zstd --reproducible --no-hostonly \
+        --add "anaconda" \
+        "/usr/lib/modules/${kernel}/initramfs.img" "$kernel"
+
+# Anaconda's graphical live session runs as root.
+RUN mkdir -p /etc/systemd/user/pipewire.service.d /etc/systemd/user/pipewire.socket.d && \
+    printf '[Unit]\nConditionUser=\n' > /etc/systemd/user/pipewire.service.d/allowroot.conf && \
+    printf '[Unit]\nConditionUser=\n' > /etc/systemd/user/pipewire.socket.d/allowroot.conf
+
+RUN bootc container lint

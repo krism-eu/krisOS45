@@ -1,0 +1,6 @@
+label: "Fedora-S-dvd-x86_64-45"
+grub2:
+  entries:
+    - name: "Install KrisOS K1.0"
+      linux: "/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=Fedora-S-dvd-x86_64-45 console=tty0 inst.graphical inst.wait_for_disks=0 inst.noibft selinux=1 enforcing=0 rhgb quiet"
+      initrd: "/images/pxeboot/initrd.img"
