@@ -175,6 +175,14 @@ def acquire_plan_lock():
     return fd
 
 
+def acquire_transaction_lock(lock):
+    """Take the exclusive rk state lock and normalize the busy error."""
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        raise RuntimeError('Another rk transaction is in progress') from error
+
+
 def _protected(path):
     return any(path == prefix or path.startswith(prefix + '/') for prefix in PROTECTED_PREFIXES)
 
@@ -498,10 +506,12 @@ def main():
         return
     if os.geteuid() != 0:
         raise RuntimeError('Run with sudo')
-    guard()
-    load_intent()
     with (STATE / 'lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        acquire_transaction_lock(lock)
+        # Read and validate mutable state only after taking the exclusive lock.
+        # transact() repeats these checks immediately before solver work.
+        guard()
+        load_intent()
         if args.command == 'forget':
             forget_requests(requested)
         else:
