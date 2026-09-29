@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-final-iso:
-    name: Pinned main payload + offline Anaconda ISO
+    name: Pinned Fedora 45 payload + offline Anaconda ISO
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
@@ -73,16 +73,17 @@ jobs:
         with:
           cosign-release: 'v3.0.6'
 
-      - name: Verify and pull signed main payload
+      - name: Verify and pull signed Fedora 45 payload
         id: main_payload
         shell: bash
         run: |
           set -euo pipefail
           source build_files/KrisOS-payload.lock
           [[ "$KRISOS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos:$KRISOS_COMMIT" ]]
+          [[ "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:$KRISOS_COMMIT" ]]
+          git cat-file -e "$KRISOS_COMMIT^{commit}" 2>/dev/null || true
           [[ "$KRISOS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$KRISOS_KRISCC" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc44\.x86_64$ ]]
+          [[ "$KRISOS_KRISCC" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc(44|45)\.x86_64$ ]]
 
           authfile="$(mktemp)"
           trap 'rm -f "$authfile"' EXIT
@@ -94,11 +95,11 @@ jobs:
           printf '%s\n' "$remote_digest" > main-payload.digest
 
           cosign verify \
-            --certificate-identity 'https://github.com/krism-eu/KrisOS/.github/workflows/build-m1.yml@refs/heads/main' \
+            --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/build-m1.yml@refs/heads/k1.0-final-payload' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-            "ghcr.io/krism-eu/krisos@$KRISOS_DIGEST" 2>&1 | tee main-cosign-verify.log
+            "ghcr.io/krism-eu/krisos45@$KRISOS_DIGEST" 2>&1 | tee main-cosign-verify.log
 
-          digest_ref="ghcr.io/krism-eu/krisos@$KRISOS_DIGEST"
+          digest_ref="ghcr.io/krism-eu/krisos45@$KRISOS_DIGEST"
           sudo podman pull --authfile "$authfile" "$digest_ref"
           sudo podman tag "$digest_ref" "$KRISOS_TARGET_REF"
           test "$(sudo podman image inspect "$KRISOS_TARGET_REF" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$KRISOS_COMMIT"
@@ -124,7 +125,7 @@ jobs:
           echo "kriscc=$KRISOS_KRISCC" >> "$GITHUB_OUTPUT"
           echo "image_id=$image_id" >> "$GITHUB_OUTPUT"
 
-      - name: Extract exact main QA scripts
+      - name: Extract exact payload QA scripts
         shell: bash
         run: |
           set -euo pipefail
@@ -182,7 +183,7 @@ jobs:
             lsinitrd "/usr/lib/modules/$kernel/initramfs.img" | grep -E "anaconda|anaconda-lib" >/dev/null
           '
 
-      - name: Build offline Anaconda ISO from exact main payload
+      - name: Build offline Anaconda ISO from exact Fedora 45 payload
         shell: bash
         env:
           KRISOS_PAYLOAD_REF: ${{ steps.main_payload.outputs.ref }}
@@ -271,7 +272,7 @@ jobs:
           compression-level: 0
           retention-days: 7
 
-      - name: Upload final main-aligned ISO
+      - name: Upload final Fedora45-aligned ISO
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: krisos-k1-main-aligned-${{ github.sha }}

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This branch owns only the installer. The installed OS is the exact signed main payload.
+# This branch owns only the installer. The installed OS is the exact signed Fedora 45 payload.
 source build_files/KrisOS-payload.lock
 test "$KRISOS_COMMIT" = "544535a6a21a1cb9f446c2d5b5497c6ab1e57eb2"
 test "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos:544535a6a21a1cb9f446c2d5b5497c6ab1e57eb2"
 test "$KRISOS_DIGEST" = "sha256:7a30064f3d979e9ff56ff80cf845b4fbdc10f5543988df9b73f967a348eee40e"
 test "$KRISOS_KRISCC" = "0.7.9-1.fc44.x86_64"
 
-# Runtime sources and runtime workflows belong to main and must not drift here.
+# Runtime sources and runtime workflows belong to k1.0-final-payload and must not drift here.
 test ! -e Containerfile
 test ! -e bin
 test ! -e systemd
@@ -73,7 +73,7 @@ if grep -Eq '(^|[[:space:]])(systemctl|daemon-reload)([[:space:]]|$)' installer/
   exit 1
 fi
 
-# Fresh-home SELinux finalization must reuse main's validated helper and only
+# Fresh-home SELinux finalization must reuse the payload's validated helper and only
 # apply when its non-destructive preview reports a real mismatch.
 test -s installer/krisos-home-labels-finalize.ks
 grep -Fq 'COPY krisos-home-labels-finalize.ks /usr/share/anaconda/krisos-home-labels-finalize.ks' installer/Containerfile
@@ -94,8 +94,8 @@ if grep -Eq 'restorecon[[:space:]].*(-R|-F)|(^|[[:space:]])(chcon|semanage|semod
   exit 1
 fi
 
-# Pin the integration contract to the exact main source behind the payload:
-# main owns /var/home defaults/policy and the conservative four-path helper.
+# Pin the integration contract to the exact payload source behind the image:
+# payload owns /var/home defaults/policy and the conservative four-path helper.
 git fetch --no-tags origin "$KRISOS_COMMIT"
 main_container="$(mktemp)"
 main_helper="$(mktemp)"

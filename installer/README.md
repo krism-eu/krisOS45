@@ -1,4 +1,4 @@
-# KrisOS Fedora 45 installer
+# KrisOS45 Fedora 45 installer
 
 This directory contains the minimal installer path for KrisOS.
 
@@ -18,7 +18,7 @@ The supported offline build is `.github/workflows/build-k1-final-iso.yml` on
 `k1.0-final-iso`. It verifies the payload digest and Cosign identity,
 pulls by digest, assigns the locked target reference locally, and builds the ISO.
 The installer branch contains no duplicate KrisOS runtime source; post-install QA
-scripts are extracted from the exact main commit named by
+scripts are extracted from the exact Fedora 45 payload commit named by
 `build_files/KrisOS-payload.lock`.
 
 For a local build, first reproduce that workflow's signature/digest verification
