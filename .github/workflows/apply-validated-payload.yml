@@ -137,22 +137,23 @@ jobs:
           ! grep -RIn --exclude-dir=.git 'k1.0-final-payload' .
           ! grep -RIn --exclude-dir=.git --exclude='*.rpm' 'fedora-bootc-45-minimal@sha256' .
 
-      - name: Copy validated payload source into main
+      - name: Export generated final workflows
         shell: bash
         run: |
           set -euo pipefail
-          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .github ! -name payload -exec rm -rf {} +
-          rsync -a --exclude='.git' --exclude='.github' payload/ ./
-          rm -rf payload
-          git status --short
+          mkdir -p .workflow-export
+          for f in build-m1.yml promote-m1.yml sync-kriscc.yml; do
+            base64 -w0 "payload/.github/workflows/$f" > ".workflow-export/$f.b64"
+          done
+          sha256sum .workflow-export/*.b64
 
-      - name: Commit validated payload source
+      - name: Commit workflow export
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A -- ':!.github'
+          git add .workflow-export
           git diff --cached --check
-          git commit -m 'Adopt Review 4 Fedora 45 rolling payload'
+          git commit -m 'Export validated rolling workflows'
           git push origin HEAD:main
