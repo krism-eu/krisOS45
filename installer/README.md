@@ -4,7 +4,7 @@ This directory contains the minimal installer path for KrisOS.
 
 ## Goals
 
-- Fedora 45 Anaconda runtime pinned to 45.25-1.fc45, independent from the installed KrisOS payload.
+- Fedora 45 Anaconda runtime pinned to 45.27-1.fc45, independent from the installed KrisOS payload.
 - `bootc-generic-iso`, not the legacy `anaconda-iso` path.
 - Exact validated KrisOS bootc payload embedded in the ISO, while Anaconda storage and user setup remain interactive.
 - No destructive automatic partitioning.

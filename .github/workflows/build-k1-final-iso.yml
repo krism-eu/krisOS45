@@ -39,7 +39,7 @@ jobs:
           bash -n tests/k1-final-contract.sh
           bash tests/k1-final-contract.sh
           grep -Fq 'FROM quay.io/fedora/fedora-bootc:45' installer/Containerfile
-          grep -Fq 'ARG ANACONDA_NEVR=45.25-1.fc45' installer/Containerfile
+          grep -Fq 'ARG ANACONDA_NEVR=45.27-1.fc45' installer/Containerfile
           grep -Fq 'anaconda-install-env-deps-${ANACONDA_NEVR}' installer/Containerfile
           grep -Fq 'systemctl enable anaconda-shell@.service' installer/Containerfile
           grep -Fq 'label: "Fedora-S-dvd-x86_64-45"' installer/iso.yaml
@@ -167,8 +167,8 @@ jobs:
             ! grep -Eq "^[[:space:]]*(clearpart|autopart|part|partition|logvol|volgroup|user|rootpw|reboot|shutdown)([[:space:]]|$)" "$defaults"
             getent passwd install | grep -Fq "/usr/libexec/anaconda/run-anaconda"
             test -x /usr/bin/list-harddrives
-            test "$(rpm -q --qf "%{VERSION}-%{RELEASE}" anaconda-core)" = "45.25-1.fc45"
-            test "$(rpm -q --qf "%{VERSION}-%{RELEASE}" anaconda-install-img-deps)" = "45.25-1.fc45"
+            test "$(rpm -q --qf "%{VERSION}-%{RELEASE}" anaconda-core)" = "45.27-1.fc45"
+            test "$(rpm -q --qf "%{VERSION}-%{RELEASE}" anaconda-install-img-deps)" = "45.27-1.fc45"
             grep -Fxq "Alias=autovt@.service" /usr/lib/systemd/system/anaconda-shell@.service
             grep -Fxq "DefaultInstance=tty2" /usr/lib/systemd/system/anaconda-shell@.service
             grep -Fxq "ReserveVT=2" /usr/lib/systemd/logind.conf.d/anaconda-logind.conf

@@ -1,7 +1,7 @@
 FROM quay.io/fedora/fedora-bootc:45
 
 ARG KRISOS_PAYLOAD_REF
-ARG ANACONDA_NEVR=45.25-1.fc45
+ARG ANACONDA_NEVR=45.27-1.fc45
 
 # Fedora 45 Anaconda runtime for the recommended bootc-generic-iso image type.
 # The exact validated KrisOS payload reference is written into Anaconda's

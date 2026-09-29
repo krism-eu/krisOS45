@@ -24,7 +24,7 @@ grep -Fq 'bootc-generic-iso' installer/build-installer.sh
 grep -Fq -- '--bootc-installer-payload-ref "$payload_ref"' installer/build-installer.sh
 grep -Fq -- '--build-arg KRISOS_PAYLOAD_REF="$payload_ref"' installer/build-installer.sh
 grep -Fq 'ARG KRISOS_PAYLOAD_REF' installer/Containerfile
-grep -Fq 'ARG ANACONDA_NEVR=45.25-1.fc45' installer/Containerfile
+grep -Fq 'ARG ANACONDA_NEVR=45.27-1.fc45' installer/Containerfile
 grep -Fq 'anaconda-${ANACONDA_NEVR}' installer/Containerfile
 grep -Fq 'anaconda-install-img-deps-${ANACONDA_NEVR}' installer/Containerfile
 grep -Fq 'anaconda-dracut-${ANACONDA_NEVR}' installer/Containerfile
