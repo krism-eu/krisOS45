@@ -143,9 +143,9 @@ jobs:
           set -euo pipefail
           mkdir -p .workflow-export
           for f in build-m1.yml promote-m1.yml sync-kriscc.yml; do
-            base64 -w0 "payload/.github/workflows/$f" > ".workflow-export/$f.b64"
+            cp "payload/.github/workflows/$f" ".workflow-export/$f.txt"
           done
-          sha256sum .workflow-export/*.b64
+          sha256sum .workflow-export/*.txt
 
       - name: Commit workflow export
         shell: bash
