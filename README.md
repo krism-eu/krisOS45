@@ -72,7 +72,7 @@ ricostruzione già richiesta da `needs-sync`.
 
 ## Cadenza immagini
 
-Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue tutti i gate e aggiorna `ghcr.io/krism-eu/krisos45:m1` soltanto se la build è verde. Il sistema installato non si aggiorna da solo: `m1` è semplicemente l'ultima immagine pronta quando l'utente decide di eseguire l'update. Dopo Fedora 45 stable la stessa build passa a cadenza settimanale.
+Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue tutti i gate e aggiorna `ghcr.io/krism-eu/krisos45:m1` soltanto se la build è verde. Il sistema installato non si aggiorna da solo: `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e `m1` è semplicemente l'ultima immagine pronta quando l'utente decide di eseguire l'update. Dopo Fedora 45 stable la stessa build passa a cadenza settimanale.
 
 `krisCC` non avvia automaticamente nuove build KrisOS: resta congelato nell'immagine finché la versione applicativa non viene dichiarata definitiva.
 

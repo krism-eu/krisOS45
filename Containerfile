@@ -340,7 +340,7 @@ RUN set -eux; \
     systemctl disable mdmonitor.service raid-check.timer; \
     systemctl disable flatpak-add-fedora-repos.service; \
     systemctl disable cockpit.socket; \
-    systemctl mask dnf-makecache.timer dnf5-makecache.timer || true; \
+    systemctl mask bootc-fetch-apply-updates.timer dnf-makecache.timer dnf5-makecache.timer || true; \
     systemctl disable ufw.service || true; \
     systemctl set-default graphical.target
 
@@ -466,6 +466,7 @@ RUN set -eux; \
     assert_disabled raid-check.timer; \
     assert_disabled flatpak-add-fedora-repos.service; \
     assert_disabled cockpit.socket; \
+    assert_disabled bootc-fetch-apply-updates.timer; \
     assert_disabled dnf-makecache.timer; \
     assert_disabled dnf5-makecache.timer; \
     assert_disabled ufw.service; \
