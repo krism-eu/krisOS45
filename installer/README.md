@@ -87,3 +87,11 @@ The ISO boot entry explicitly uses `selinux=1 enforcing=0`. This keeps the SELin
 The interactive Anaconda defaults explicitly contain `selinux --enforcing` for the installed system. The embedded KrisOS payload also carries `SELINUX=enforcing` in `/etc/selinux/config`. Post-install validation must confirm `getenforce == Enforcing` and that the installed kernel command line contains neither `selinux=0` nor `enforcing=0`.
 
 `SHA256SUMS` detects corruption or accidental changes to a downloaded installer artifact. It is not a replacement for a future signed-release policy such as Cosign.
+
+## Fedora 45 VT handoff
+
+Fedora 45 may provide `autovt@.service` as a live-image alias to
+`kmsconvt@.service`. The installer image removes that alias immediately before
+enabling Anaconda's own `anaconda-shell@.service` alias. This change is confined
+to the installer runtime; the installed KrisOS45 payload retains its own Fedora
+45 console policy.

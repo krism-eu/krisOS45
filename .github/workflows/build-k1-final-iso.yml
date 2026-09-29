@@ -41,6 +41,7 @@ jobs:
           grep -Fq 'FROM quay.io/fedora/fedora-bootc:45' installer/Containerfile
           grep -Fq 'ARG ANACONDA_NEVR=45.27-1.fc45' installer/Containerfile
           grep -Fq 'anaconda-install-env-deps-${ANACONDA_NEVR}' installer/Containerfile
+          grep -Fq 'rm -f /etc/systemd/system/autovt@.service' installer/Containerfile
           grep -Fq 'systemctl enable anaconda-shell@.service' installer/Containerfile
           grep -Fq 'label: "Fedora-S-dvd-x86_64-45"' installer/iso.yaml
           grep -Fq 'inst.stage2=hd:LABEL=Fedora-S-dvd-x86_64-45' installer/iso.yaml

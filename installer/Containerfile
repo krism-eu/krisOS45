@@ -87,7 +87,11 @@ RUN mv /usr/share/anaconda/list-harddrives-stub /usr/bin/list-harddrives && \
 # Anaconda 45.25 carries the autovt alias/default instance and logind drop-in.
 # Enable the upstream unit so systemd materializes those [Install] contracts;
 # do not recreate either file locally.
-RUN systemctl enable anaconda-shell@.service && \
+# Fedora 45 ships autovt@.service already redirected to kmsconvt@.service.
+# The live Anaconda environment owns that VT alias while installation runs;
+# remove only the live-image alias before enabling Anaconda's documented Alias.
+RUN rm -f /etc/systemd/system/autovt@.service && \
+    systemctl enable anaconda-shell@.service && \
     test "$(readlink -f /etc/systemd/system/autovt@.service)" = "/usr/lib/systemd/system/anaconda-shell@.service" && \
     test -L /etc/systemd/system/anaconda.target.wants/anaconda-shell@tty2.service
 

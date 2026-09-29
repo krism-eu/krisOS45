@@ -31,6 +31,7 @@ grep -Fq 'anaconda-dracut-${ANACONDA_NEVR}' installer/Containerfile
 grep -Fq "grep -Fxq 'Alias=autovt@.service'" installer/Containerfile
 grep -Fq "grep -Fxq 'ReserveVT=2'" installer/Containerfile
 grep -Fq "grep -Fxq 'StandardInput=null'" installer/Containerfile
+grep -Fq 'rm -f /etc/systemd/system/autovt@.service' installer/Containerfile
 grep -Fq 'systemctl enable anaconda-shell@.service' installer/Containerfile
 test ! -e installer/anaconda-shell.conf
 ! grep -Fq 'ln -s /usr/lib/systemd/system/anaconda-shell@.service' installer/Containerfile
