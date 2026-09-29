@@ -114,6 +114,8 @@ jobs:
       - name: Fetch exact candidate artifact
         if: steps.candidate.outputs.changed == 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           source build_files/krisCC.lock

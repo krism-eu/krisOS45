@@ -279,7 +279,7 @@ RUN set -eux; \
       bash /tmp/check-initramfs-accounts.sh "$kernel_dir/initramfs.img"; \
       generated=$((generated + 1)); \
     done; \
-    test "$generated" -ge 1; \
+    test "$generated" -eq 1; \
     rm -f /tmp/check-initramfs-accounts.sh
 
 # KrisOS stores persistent user homes under /var/home while /home is the bootc/
@@ -386,7 +386,7 @@ RUN set -eux; \
       lsinitrd "$kernel_dir/initramfs.img" | grep -F 'kernel/x86/microcode/AuthenticAMD.bin' >/dev/null; \
       kernel_count=$((kernel_count + 1)); \
     done; \
-    test "$kernel_count" -ge 1; \
+    test "$kernel_count" -eq 1; \
     test -f /usr/share/applications/krisCC.desktop; \
     test -f /usr/share/metainfo/org.kriscc.KrisCC.metainfo.xml; \
     test -f /usr/share/polkit-1/actions/org.kriscc.controlcenter.policy; \

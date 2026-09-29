@@ -8,7 +8,7 @@ controlli di recovery e la propria pipeline di release.
 ## Branch e artefatti
 
 La branch runtime è `main`. Costruisce e firma l'immagine bootc
-`ghcr.io/krism-eu/krisos45:<commit>`. La branch `k1.0-final-iso` contiene solo
+`ghcr.io/krism-eu/krisos45:build-<run_id>-<attempt>`. La branch `k1.0-final-iso` contiene solo
 l'installer e incorpora per digest un payload già validato e firmato; non
 ricostruisce una seconda copia del sistema operativo.
 
@@ -16,7 +16,7 @@ Durante Fedora 45 Branched il `Containerfile` segue `fedora-bootc-45-minimal:lat
 RPM installato durante il build viene invece risolto dai repository Fedora
 firmati disponibili in quel momento: per questo una ricostruzione successiva
 può scegliere NEVRA differenti. Ogni build salva `owned-nevra.txt`, la
-provenance del firmware RTL e un diff informativo rispetto al tag `m1` promosso.
+provenance del firmware RTL e un diff informativo rispetto al tag `m1` precedente.
 L'output pubblicato resta identificato in modo immutabile dal digest OCI e dalla
 firma Cosign.
 
@@ -85,7 +85,7 @@ sudo podman build -t localhost/krisos45:m1 .
 
 La release CI esegue i test di policy, costruisce l'immagine, prova una vera
 transazione libdnf5/RPM in container, cattura la provenance pacchetti e, sul
-percorso publish, pubblica un tag per commit, firma il digest con Cosign e
+percorso publish, pubblica un tag immutabile per build, firma il digest con Cosign e
 verifica il pull anonimo.
 
 Il componente image-owned è congelato su `krisCC 0.7.10-1.fc45` mentre il lavoro applicativo prosegue separatamente. Finché krisCC non viene dichiarato definitivo, le sue prove restano manuali e non innescano nuove immagini KrisOS. L'RPM release è integrità-pinned per SHA-256 e installato con l'eccezione locale `rpm --nosignature`; questa eccezione non modifica la policy di firma di DNF/`rk`.

@@ -41,7 +41,7 @@ Esempio per il gate completo:
 
 ```bash
 export KRISOS_E2E_TARGET=qa@192.0.2.10
-export KRISOS_E2E_SWITCH_IMAGE=ghcr.io/krism-eu/krisos45:<immutable-commit>
+export KRISOS_E2E_SWITCH_IMAGE=ghcr.io/krism-eu/krisos45@sha256:<digest>
 export KRISOS_EXPECT_IMAGE="$KRISOS_E2E_SWITCH_IMAGE"
 export KRISOS_EXPECT_KRISCC=<version-release.fc45.x86_64>
 export KRISOS_EXPECT_ADMIN_USER=qa
@@ -77,7 +77,7 @@ repo Fedora live. Ogni run conserva quindi:
 - `fedora45-base.txt`;
 - `owned-nevra.txt`;
 - `firmware-source-nevra.txt`;
-- `previous-owned-nevra.txt` quando il tag `m1` è disponibile e leggibile;
+- `previous-owned-nevra.txt` quando il tag `m1` precedente è disponibile e leggibile;
 - `package-drift.txt`;
 
 Il confronto prova prima accesso GHCR autenticato con il `GITHUB_TOKEN` della

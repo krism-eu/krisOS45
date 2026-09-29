@@ -82,6 +82,13 @@ class Policy(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'Another rk transaction is in progress'):
                 rk.acquire_plan_lock()
 
+    def test_transaction_lock_busy_has_clear_error(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                (Path(directory) / 'lock').open('a') as lock, \
+                mock.patch.object(rk.fcntl, 'flock', side_effect=BlockingIOError):
+            with self.assertRaisesRegex(RuntimeError, 'Another rk transaction is in progress'):
+                rk.acquire_transaction_lock(lock)
+
     def test_all_base_actions_rejected(self):
         for action in ('Install', 'Remove', 'Upgrade', 'Downgrade', 'Reinstall', 'Replaced'):
             with self.subTest(action=action), self.assertRaises(RuntimeError):
@@ -214,6 +221,25 @@ class Policy(unittest.TestCase):
                 mock.patch.object(rk.os.path, 'lexists', return_value=False):
             rk.validate_payload('/tmp/overlay.rpm')
 
+    def test_incoming_symlink_chain_cannot_escape_usr(self):
+        entries = [
+            ('/usr/share/a', '120777', 'b', ''),
+            ('/usr/share/b', '120777', 'c', ''),
+            ('/usr/share/c', '120777', '../../../etc', ''),
+            ('/usr/share/a/payload', '100644', '', ''),
+        ]
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                self.assertRaisesRegex(RuntimeError, 'resolves outside /usr'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_incoming_symlink_cycle_is_rejected(self):
+        entries = [
+            ('/usr/share/a', '120777', 'b', ''),
+            ('/usr/share/b', '120777', 'a', ''),
+        ]
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                self.assertRaisesRegex(RuntimeError, 'symlink cycle'):
+            rk.validate_payload('/tmp/overlay.rpm')
 
     def test_special_setid_and_capability_payloads_are_rejected(self):
         cases = (

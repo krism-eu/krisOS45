@@ -154,18 +154,15 @@ esac
     def test_workflow_release_permissions_and_serialization_contract(self):
         build = (ROOT / '.github/workflows/build-m1.yml').read_text()
         sync = (ROOT / '.github/workflows/sync-kriscc.yml').read_text()
-        promote = (ROOT / '.github/workflows/promote-m1.yml').read_text()
         self.assertIn('group: build-m1-${{ github.ref }}', build)
         self.assertIn("expected = 'group: build-m1-$' + '{{ github.ref }}'", build)
         self.assertNotIn("grep -Fq 'group: build-m1-${{ github.ref }}'", build)
         self.assertIn('packages: write', build)
         self.assertIn('pull-requests: write', sync)
         self.assertNotIn('gh workflow run', sync)
-        self.assertIn('group: promote-m1', promote)
-        self.assertIn('actions: read', promote)
-        self.assertNotIn('deployments: read', promote)
-        self.assertIn('Require protected stable-promotion environment', promote)
-        self.assertIn('required_reviewers', promote)
+        self.assertFalse((ROOT / '.github/workflows/promote-m1.yml').exists())
+        self.assertIn('Advance m1 to latest green build', build)
+        self.assertIn("github.event_name == 'push'", build)
 
 
 if __name__ == '__main__':
