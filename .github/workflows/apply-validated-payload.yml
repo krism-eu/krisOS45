@@ -137,33 +137,22 @@ jobs:
           ! grep -RIn --exclude-dir=.git 'k1.0-final-payload' .
           ! grep -RIn --exclude-dir=.git --exclude='*.rpm' 'fedora-bootc-45-minimal@sha256' .
 
-      - name: Replace main with validated payload
-        id: promote_source
-        working-directory: payload
+      - name: Copy validated payload source into main
         shell: bash
-        env:
-          STAGING_MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .github ! -name payload -exec rm -rf {} +
+          rsync -a --exclude='.git' --exclude='.github' payload/ ./
+          rm -rf payload
+          git status --short
+
+      - name: Commit validated payload source
+        shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add -A -- ':!.github'
+          git diff --cached --check
           git commit -m 'Adopt Review 4 Fedora 45 rolling payload'
-          new_sha="$(git rev-parse HEAD)"
-          git push --force-with-lease="refs/heads/main:${STAGING_MAIN_SHA}" origin HEAD:main
-          echo "sha=$new_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Start first published rolling build
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for attempt in {1..20}; do
-            if gh workflow run build-m1.yml --repo "$GITHUB_REPOSITORY" --ref main -f publish=true; then
-              exit 0
-            fi
-            sleep 3
-          done
-          echo 'Unable to dispatch Build M1 after publishing main.' >&2
-          exit 1
+          git push origin HEAD:main
