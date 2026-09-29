@@ -1,0 +1,516 @@
+#!/usr/bin/python3
+"""Additive Fedora RPM transactions on the KrisOS persistent overlay."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import posixpath
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+
+STATE = Path('/var/lib/krisos')
+OWNED = Path('/usr/share/krisos/owned-packages.txt')
+IDENTITIES = Path('/usr/share/krisos/owned-nevra.txt')
+
+RPM = '/usr/bin/rpm'
+FINDMNT = '/usr/bin/findmnt'
+GETENFORCE = '/usr/sbin/getenforce'
+LS = '/usr/bin/ls'
+
+# Incoming overlay RPMs must stay application-like.  These namespaces either
+# own the immutable base/trust model or can create persistent/boot-time effects
+# outside the disposable /usr overlay (sysusers, tmpfiles, units, udev, PAM,
+# polkit, kernel/dracut policy, etc.).
+PROTECTED_PREFIXES = (
+    '/usr/lib/modules',
+    '/usr/lib/sysimage',
+    '/usr/lib/ostree',
+    '/usr/lib/rpm',
+    '/usr/share/krisos',
+    '/usr/share/dnf5',
+    '/usr/share/pki/rpm-gpg',
+    '/usr/lib/sysusers.d',
+    '/usr/lib/tmpfiles.d',
+    '/usr/lib/udev',
+    # Protect the whole systemd vendor-policy namespace, including units,
+    # presets, networkd configuration and global *.conf.d defaults.
+    '/usr/lib/systemd',
+    '/usr/lib/firewalld',
+    '/usr/lib/selinux',
+    '/usr/share/selinux',
+    '/usr/lib/pam.d',
+    '/usr/lib/security',
+    '/usr/lib64/security',
+    '/usr/share/polkit-1',
+    '/usr/lib/polkit-1',
+    '/usr/lib/sysctl.d',
+    '/usr/lib/modules-load.d',
+    '/usr/lib/modprobe.d',
+    '/usr/lib/NetworkManager',
+    '/usr/lib/dracut',
+    '/usr/lib/kernel',
+)
+
+
+def output(*args):
+    return subprocess.check_output(args, text=True).strip()
+
+
+def mount_snapshot():
+    """Return the live /usr mount identity used across rk transactions."""
+    return output(FINDMNT, '-rn', '-M', '/usr', '-o', 'ID,FSTYPE,OPTIONS')
+
+
+def names(values):
+    """Validate exact package names supplied by users or persisted intent."""
+    for value in values:
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9+_.-]{0,127}', value) or value.endswith(('.rpm', '.i686', '.x86_64', '.noarch')):
+            raise RuntimeError(f'Use an exact package name, without architecture, URL or RPM path: {value}')
+    return set(values)
+
+
+def persisted_names(text):
+    """Validate persisted package intent while tolerating blank lines only."""
+    return names([line for line in text.splitlines() if line.strip()])
+
+
+def owned_names(values):
+    """Load image-generated RPM names without applying the CLI grammar policy."""
+    result = set()
+    for value in values:
+        if not value or value != value.strip() or any(char.isspace() for char in value) or '\x00' in value:
+            raise RuntimeError(f'Invalid immutable package name in {OWNED}: {value!r}')
+        result.add(value)
+    return result
+
+
+def atomic(path, contents, mode=0o600):
+    fd, temp = tempfile.mkstemp(prefix='.rk-', dir=path.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+        sync_dir(path.parent)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def sync_dir(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def guard(allow_pending=False):
+    mount = mount_snapshot()
+    fields = mount.split()
+    if len(fields) != 3 or fields[1] != 'overlay':
+        raise RuntimeError('A dedicated /usr overlay is required; base-only boot is read-only for rk')
+    opts = fields[2].split(',')
+    for option in ('rw', 'upperdir=/var/lib/krisos/upper', 'workdir=/var/lib/krisos/work'):
+        if option not in opts:
+            raise RuntimeError(f'Unexpected /usr mount: missing {option}')
+    if not allow_pending and (STATE / 'pending').exists():
+        raise RuntimeError('Interrupted transaction requires reboot before rk runs again')
+    if output(GETENFORCE) != 'Enforcing' or 'object_r:usr_t:' not in output(LS, '-Zd', '/usr'):
+        raise RuntimeError('SELinux must be enforcing and /usr labeled usr_t')
+    dbpath = Path(output(RPM, '--eval', '%{_dbpath}')).resolve()
+    if not str(dbpath).startswith('/usr/'):
+        raise RuntimeError(f'RPM database is outside the persistent /usr overlay: {dbpath}')
+    return mount
+
+
+def check_base(owned):
+    installed = output(RPM, '-qa', '--qf', '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n').splitlines()
+    actual = {line for line in installed if line.split('\t')[0] in owned}
+    expected = set(IDENTITIES.read_text().splitlines())
+    if actual != expected:
+        missing_or_changed = sorted(expected - actual)
+        observed = sorted(actual - expected)
+        details = []
+        if missing_or_changed:
+            details.append('expected but missing/changed: ' + '; '.join(missing_or_changed))
+        if observed:
+            details.append('observed replacement/change: ' + '; '.join(observed))
+        raise RuntimeError('Immutable package identities changed; refusing a transaction (' + ' | '.join(details) + ')')
+
+
+def validate_plan(rows, owned, remove):
+    for name, arch, action in rows:
+        if name in owned:
+            raise RuntimeError(f'Transaction touches immutable package: {name} ({action})')
+        if arch not in ('x86_64', 'noarch'):
+            raise RuntimeError(f'Unsupported architecture: {name}.{arch}')
+        if action != 'Install' and not (action == 'Remove' and name in remove):
+            raise RuntimeError(f'Only additive installs and explicitly requested removals are supported: {name} ({action})')
+
+
+def harden_repo(repo):
+    """Preserve the administrator's enabled state while enforcing RPM signatures."""
+    config = repo.get_config()
+    config.pkg_gpgcheck = True
+
+
+def acquire_plan_lock():
+    """Take the shared rk state lock when provisioned; plan stays usable pre-tmpfiles."""
+    try:
+        fd = os.open(STATE / 'lock', os.O_RDONLY)
+    except FileNotFoundError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        os.close(fd)
+        raise RuntimeError('Another rk transaction is in progress') from error
+    return fd
+
+
+def _protected(path):
+    return any(path == prefix or path.startswith(prefix + '/') for prefix in PROTECTED_PREFIXES)
+
+
+def _link_destination(link_path, target):
+    if not target:
+        raise RuntimeError('RPM symlink has an empty target: ' + link_path)
+    if target.startswith('/'):
+        return posixpath.normpath(target)
+    return posixpath.normpath(posixpath.join(posixpath.dirname(link_path), target))
+
+
+def _resolve_manifest_links(path, links):
+    # Resolve ancestors created as symlinks by this same incoming RPM.  The live
+    # filesystem alone cannot detect this before installation because those
+    # symlinks do not exist yet.  Cap substitutions to reject cycles.
+    current = posixpath.normpath(path)
+    for _ in range(len(links) + 1):
+        parts = current.split('/')
+        replaced = False
+        for index in range(2, len(parts) + 1):
+            prefix = '/'.join(parts[:index]) or '/'
+            if prefix not in links:
+                continue
+            suffix = '/'.join(parts[index:])
+            target = _link_destination(prefix, links[prefix])
+            current = posixpath.normpath(posixpath.join(target, suffix))
+            replaced = True
+            break
+        if not replaced:
+            return current
+    raise RuntimeError('RPM payload contains a symlink cycle affecting: ' + path)
+
+
+def validate_payload(path):
+    for flag in ('--scripts', '--triggers', '--filetriggers'):
+        if output(RPM, '-qp', flag, path):
+            raise RuntimeError('Package scriptlets/triggers are not supported in this release: ' + path)
+
+    # Do not pass the manifest through output(): its global .strip() would
+    # remove trailing TABs from the final RPM entry when FILELINKTOS/FILECAPS
+    # are empty, corrupting the four-column record. Keep the raw query output
+    # and let splitlines() remove only line boundaries.
+    listing = subprocess.check_output(
+        (
+            RPM, '-qp', '--qf',
+            '[%{FILENAMES}\t%{FILEMODES:octal}\t%{FILELINKTOS}\t%{FILECAPS}\n]', path,
+        ),
+        text=True,
+    )
+    entries = []
+    links = {}
+    for line in listing.splitlines():
+        fields = line.split('\t')
+        if len(fields) != 4:
+            raise RuntimeError('Malformed RPM file manifest: ' + line)
+        filename, mode_text, link_target, file_caps = fields
+        file = Path(filename)
+        try:
+            mode = int(mode_text, 8)
+        except ValueError as error:
+            raise RuntimeError('Malformed RPM file mode: ' + line) from error
+        if not filename.startswith('/usr/') or '..' in file.parts or posixpath.normpath(filename) != filename:
+            raise RuntimeError('Package payload outside canonical /usr: ' + filename)
+        file_type = stat.S_IFMT(mode)
+        directory = file_type == stat.S_IFDIR
+        symlink = file_type == stat.S_IFLNK
+        regular = file_type == stat.S_IFREG
+        if not (regular or directory or symlink):
+            raise RuntimeError('Special files are not supported in additive RPM payloads: ' + filename)
+        if mode & (stat.S_ISUID | stat.S_ISGID):
+            raise RuntimeError('setuid/setgid files are not supported in additive RPM payloads: ' + filename)
+        if file_caps not in ('', '(none)'):
+            raise RuntimeError('File capabilities are not supported in additive RPM payloads: ' + filename)
+        if symlink:
+            links[filename] = link_target
+        elif link_target:
+            raise RuntimeError('Non-symlink RPM entry unexpectedly has a link target: ' + filename)
+        entries.append((filename, file, directory, symlink, link_target))
+
+    for filename, file, directory, symlink, link_target in entries:
+        if symlink:
+            destination = _resolve_manifest_links(_link_destination(filename, link_target), links)
+            destination = str(Path(destination).resolve(strict=False))
+            if not destination.startswith('/usr/'):
+                raise RuntimeError('Package symlink resolves outside /usr: ' + filename)
+            if _protected(destination):
+                raise RuntimeError('Package symlink reaches protected or persistent state: ' + filename)
+
+        resolved = _resolve_manifest_links(filename, links)
+        # Account for immutable/live symlinks already present in the base too.
+        resolved = str(Path(resolved).resolve(strict=False))
+        if not resolved.startswith('/usr/') or _protected(resolved):
+            raise RuntimeError('Package payload reaches protected or persistent state: ' + filename)
+
+        if os.path.lexists(file) and not (directory and file.is_dir() and not file.is_symlink()):
+            raise RuntimeError('Additive package would overwrite an existing path: ' + filename)
+
+
+def print_plan(requested, incoming):
+    requested_names = set(requested)
+    requested_packages = sorted((pkg for pkg in incoming if pkg.get_name() in requested_names), key=lambda pkg: pkg.get_nevra())
+    dependencies = sorted((pkg for pkg in incoming if pkg.get_name() not in requested_names), key=lambda pkg: pkg.get_nevra())
+    if requested_packages:
+        print('Installing:')
+        for pkg in requested_packages:
+            print('  ' + pkg.get_nevra())
+    if dependencies:
+        print('Installing dependencies:')
+        for pkg in dependencies:
+            print('  ' + pkg.get_nevra())
+    print('Transaction Summary:')
+    print(f'Install {len(incoming)} package(s)')
+
+
+def load_intent():
+    try:
+        return persisted_names((STATE / 'packages.list').read_text())
+    except FileNotFoundError as error:
+        raise RuntimeError('KrisOS package state is not initialized; run sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/krisos.conf') from error
+
+
+def forget_requests(requested):
+    """Drop unrecoverable intent without removing installed RPMs or clearing recovery."""
+    guard()
+    if not (STATE / 'needs-sync').exists():
+        raise RuntimeError('forget is only available during recovery; use rk rm normally')
+    owned = owned_names(OWNED.read_text().splitlines())
+    intent = load_intent()
+    if requested - intent:
+        raise RuntimeError('Only saved package requests can be forgotten')
+    check_base(owned)
+    installed = set(output(RPM, '-qa', '--qf', '%{NAME}\n').splitlines())
+    if requested & (installed - owned):
+        raise RuntimeError('Cannot forget an installed overlay package; no requests changed')
+    atomic(STATE / 'packages.list', ''.join(n + '\n' for n in sorted(intent - requested)), mode=0o644)
+    print('Recovery requests updated; no RPMs removed. Run sudo rk sync to finish recovery.')
+
+
+def transact(command, requested, dry_run=False):
+    import libdnf5
+    owned = owned_names(OWNED.read_text().splitlines())
+    intent = load_intent()
+    if (STATE / 'pending').exists():
+        raise RuntimeError('Interrupted transaction requires reboot before rk runs again')
+    if command != 'sync' and (STATE / 'needs-sync').exists():
+        raise RuntimeError('Run rk sync first; if an unavailable request blocks recovery, use sudo rk forget NAME, then sudo rk sync')
+    if command == 'add' and requested & owned:
+        raise RuntimeError('Already owned by the image: ' + ', '.join(sorted(requested & owned)))
+    if command == 'rm' and (requested & owned or requested - intent):
+        raise RuntimeError('Only explicitly added, non-base packages can be removed')
+    target = intent | requested if command == 'add' else intent - requested if command == 'rm' else intent
+    install = (requested if command == 'add' else intent if command == 'sync' else set()) - owned
+    remove = requested if command == 'rm' else set()
+    before = guard()
+    check_base(owned)
+    if not install and not remove:
+        if dry_run:
+            print('Nothing to install; package request is already satisfied.')
+            return
+        atomic(STATE / 'packages.list', ''.join(n + '\n' for n in sorted(target)), mode=0o644)
+        (STATE / 'needs-sync').unlink(missing_ok=True)
+        sync_dir(STATE)
+        print('Nothing to install; package intent synchronized.')
+        return
+    base = libdnf5.base.Base()
+    base.load_config()
+    config = base.get_config()
+    config.plugins = False
+    config.installroot = '/'
+    config.install_weak_deps = False
+    config.clean_requirements_on_remove = False
+    config.excludepkgs = sorted(owned) + ['*.i686']
+    config.tsflags = []
+    config.system_state_dir = '/usr/lib/sysimage/libdnf5'
+    config.pkg_gpgcheck = True
+    config.localpkg_gpgcheck = True
+    base.setup()
+    if not dry_run and not base.lock_system_repo():
+        raise RuntimeError('Another package transaction holds the DNF system lock')
+    try:
+        check_base(owned)
+        sack = base.get_repo_sack()
+        sack.create_repos_from_system_configuration()
+        for repo in libdnf5.repo.RepoQuery(base):
+            harden_repo(repo)
+        sack.load_repos()
+        goal = libdnf5.base.Goal(base)
+        for name in sorted(install):
+            goal.add_rpm_install(name)
+        for name in sorted(remove):
+            goal.add_rpm_remove(name)
+        tx = goal.resolve()
+        if tx.get_problems() != libdnf5.base.GoalProblem_NO_PROBLEM:
+            raise RuntimeError('\n'.join(tx.get_resolve_logs_as_strings()))
+        items = list(tx.get_transaction_packages())
+        if not items:
+            if dry_run:
+                print('Nothing to install; package request is already satisfied.')
+                return
+            atomic(STATE / 'packages.list', ''.join(n + '\n' for n in sorted(target)), mode=0o644)
+            (STATE / 'needs-sync').unlink(missing_ok=True)
+            sync_dir(STATE)
+            print('Nothing to install; package intent synchronized.')
+            return
+        rows = []
+        incoming = []
+        for item in items:
+            pkg = item.get_package()
+            action = libdnf5.base.transaction.transaction_item_action_to_string(item.get_action())
+            rows.append((pkg.get_name(), pkg.get_arch(), action))
+            if action == 'Install':
+                incoming.append(pkg)
+        validate_plan(rows, owned, remove)
+        if not dry_run:
+            for item in items:
+                pkg = item.get_package()
+                action = libdnf5.base.transaction.transaction_item_action_to_string(item.get_action())
+                print(action, pkg.get_nevra(), flush=True)
+        installed_names = set(output(RPM, '-qa', '--qf', '%{NAME}\n').splitlines())
+        if install - installed_names - {p.get_name() for p in incoming}:
+            raise RuntimeError('Request must resolve to that exact package name, not a capability or NEVRA')
+        if dry_run:
+            print_plan(requested, incoming)
+            return
+        tx.download()
+        if not tx.check_gpg_signatures():
+            raise RuntimeError('RPM signature verification failed; no transaction applied')
+        for pkg in incoming:
+            validate_payload(pkg.get_package_path())
+        if int(tx.test()) != 0:
+            raise RuntimeError('RPM transaction test failed; no transaction applied')
+        if guard() != before:
+            raise RuntimeError('/usr mount changed during transaction preparation')
+        atomic(STATE / 'pending', 'Rebuild overlay from packages.list after reboot\n')
+        result = tx.run()
+        if int(result) != 0:
+            raise RuntimeError('RPM transaction failed: ' + tx.transaction_result_to_string(result))
+        check_base(owned)
+        after = mount_snapshot()
+        if after != before:
+            raise RuntimeError('/usr mount changed during RPM transaction')
+        for name in install:
+            subprocess.run([RPM, '-q', name], check=True)
+        for name in remove:
+            if subprocess.run([RPM, '-q', name], stdout=subprocess.DEVNULL).returncode == 0:
+                raise RuntimeError('Requested removal did not complete: ' + name)
+        atomic(STATE / 'packages.list', ''.join(n + '\n' for n in sorted(target)), mode=0o644)
+        (STATE / 'pending').unlink()
+        (STATE / 'needs-sync').unlink(missing_ok=True)
+        sync_dir(STATE)
+        print('Transaction complete. Requests saved for this and future deployments.')
+    finally:
+        if not dry_run:
+            base.unlock_system_repo()
+
+
+def status_payload():
+    payload = {
+        'schema': 1,
+        'overlay': 'degraded',
+        'mount': '',
+        'overlay_error': '',
+        'pending_recovery': (STATE / 'pending').exists(),
+        'needs_sync': (STATE / 'needs-sync').exists(),
+        'requests': [],
+    }
+    try:
+        payload['mount'] = guard(allow_pending=True)
+        payload['overlay'] = 'ready'
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        payload['overlay_error'] = str(error)
+
+    package_file = STATE / 'packages.list'
+    if package_file.exists():
+        payload['requests'] = sorted(persisted_names(package_file.read_text()))
+    return payload
+
+
+def show_status(json_output=False):
+    payload = status_payload()
+    if json_output:
+        print(json.dumps(payload, separators=(',', ':'), sort_keys=True))
+        return
+
+    print('Overlay:', payload['overlay'])
+    if payload['mount']:
+        print('Mount:', payload['mount'])
+    if payload['overlay_error']:
+        print('Overlay error:', payload['overlay_error'])
+    print('Pending recovery:', payload['pending_recovery'])
+    print('Needs sync:', payload['needs_sync'])
+    for package in payload['requests']:
+        print(package)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=('add', 'rm', 'sync', 'status', 'plan', 'forget'))
+    parser.add_argument('packages', nargs='*')
+    parser.add_argument('--json', action='store_true', help='emit versioned JSON for status')
+    args = parser.parse_args()
+    if args.json and args.command != 'status':
+        parser.error('--json is only valid with status')
+    takes_packages = args.command in ('add', 'rm', 'plan', 'forget')
+    if bool(args.packages) != takes_packages:
+        parser.error('add/rm/plan/forget require package names; sync/status take no packages')
+    requested = names(args.packages)
+    if args.command == 'status':
+        show_status(json_output=args.json)
+        return
+    if args.command == 'plan':
+        guard()
+        load_intent()
+        fd = acquire_plan_lock()
+        try:
+            transact('add', requested, dry_run=True)
+        finally:
+            if fd is not None:
+                os.close(fd)
+        return
+    if os.geteuid() != 0:
+        raise RuntimeError('Run with sudo')
+    guard()
+    load_intent()
+    with (STATE / 'lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if args.command == 'forget':
+            forget_requests(requested)
+        else:
+            transact(args.command, requested)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        print('rk:', error, file=sys.stderr)
+        sys.exit(1)

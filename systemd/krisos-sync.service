@@ -1,0 +1,16 @@
+[Unit]
+Description=Restore requested KrisOS packages on the current deployment
+Wants=network-online.target
+After=multi-user.target krisos-overlay.service network-online.target
+ConditionPathExists=/var/lib/krisos/needs-sync
+ConditionPathExists=/run/krisos/overlay-mounted
+ConditionKernelCommandLine=!krisos.overlay=off
+StartLimitIntervalSec=10min
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rk sync
+TimeoutStartSec=10min
+Restart=on-failure
+RestartSec=30s

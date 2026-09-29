@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=krisCC Background Service
+Comment=Legacy autostart entry intentionally disabled; krisCC is launched on demand
+Exec=/usr/bin/krisCC --background
+Icon=krisCC
+OnlyShowIn=KDE;
+NoDisplay=true
+StartupNotify=false
+Terminal=false
+Hidden=true

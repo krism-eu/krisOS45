@@ -1,0 +1,141 @@
+# KrisOS immutable package delta.
+# Packages already owned by the pinned Fedora bootc base are intentionally not
+# repeated here; the Containerfile protects that base from DNF transactions.
+# Keep this list at the feature/root level: Fedora owns the dependency closure.
+
+# Application model
+# Discover is the Flatpak GUI delegated by krisCC. Weak dependencies stay
+# disabled globally so PackageKit/notifier backends do not enter the image.
+flatpak
+plasma-discover
+plasma-discover-flatpak
+
+# Minimal Plasma shell/session + KWin
+plasma-workspace
+plasma-desktop
+plasma-milou
+plasma-systemsettings
+kwin
+kscreen
+kscreenlocker
+
+# Plasma Login Manager runtime
+plasma-login-manager
+kcm-plasmalogin
+kde-settings-plasmalogin
+kde-settings-plasma
+plasma-keyboard
+xcb-util-cursor
+
+# Core desktop integration
+plasma-nm
+plasma-pa
+plasma-integration
+kde-cli-tools
+polkit-kde
+p11-kit-server
+powerdevil
+upower
+power-profiles-daemon
+kglobalacceld
+ksystemstats
+xdg-desktop-portal
+xdg-desktop-portal-kde
+xdg-user-dirs
+udisks2
+
+# KWallet integration and password manager. pam-kwallet integrates wallet unlock
+# with the Plasma login session; kwalletmanager5 is the current Fedora package
+# name for the KDE wallet management application.
+kf6-kwallet
+pam-kwallet
+kwalletmanager5
+
+# Daily desktop tools. These are explicit KrisOS features, not accidental
+# dependency closure: M0 must remain useful even before any Flatpaks are added.
+dolphin
+konsole
+kate
+spectacle
+ark
+isoimagewriter
+okular
+kcalc
+kio-admin
+kinfocenter
+ksystemlog
+plasma-systemmonitor
+kde-partitionmanager
+kfind
+qdirstat
+
+# Network firewall. Fedora 45's plasma-firewall package currently pulls both
+# backend plugins; KrisOS deliberately enables firewalld only. firewalld
+# uses the kernel nftables stack and is the supported runtime backend.
+plasma-firewall
+firewalld
+
+# Mini-PC network + Bluetooth: MediaTek MT7921-class adapter. NetworkManager-
+# wifi does not hard-require a Wi-Fi auth backend, so keep wpa_supplicant
+# explicit. bluedevil owns the KDE/BlueZ Bluetooth closure. The single Realtek
+# RTL8168H Ethernet blob is copied from Fedora's signed linux-firmware RPM in a
+# disposable build stage; the broad linux-firmware package is not installed.
+NetworkManager-wifi
+wpa_supplicant
+bluedevil
+mt7xxx-firmware
+
+# AMD APU / Vega-class graphics: only the hardware-specific firmware plus
+# userspace acceleration. Fedora 45's mesa-dri-drivers also provides the
+# mesa-va-drivers capability and the radeonsi VA-API backend.
+amd-gpu-firmware
+amd-ucode-firmware
+mesa-dri-drivers
+mesa-vulkan-drivers
+
+# Audio/session plumbing. No JACK/pro-audio or Phonon root in M0.
+pipewire
+pipewire-alsa
+pipewire-pulseaudio
+wireplumber
+
+# Printing. Keep Fedora's complete CUPS 2.x filter closure because it is used
+# for both classic and driverless raster/PCLm conversion. Scanning is provided
+# separately by the chosen Epson application, not by a generic immutable SANE
+# stack.
+plasma-print-manager
+cups-filters
+
+# Local desktop/system utilities. NTFS3 is provided by the Fedora kernel;
+# ntfs-3g is the userspace fallback and ntfsprogs supplies NTFS maintenance
+# tools for the real shared/triboot NTFS partition. os-prober is already owned
+# by the pinned Fedora base in the validated image, so do not
+# repeat it here: the base-collision check would reject it.
+iproute
+iputils
+tar
+bash-completion
+nano
+ntfs-3g
+ntfsprogs
+zram-generator-defaults
+dnf5-plugins
+
+# On-demand web console. cockpit.socket is explicitly disabled in the image;
+# krisCC may start/stop it when requested, without enabling it persistently.
+cockpit
+
+# krisCC boot-entry integration. efibootmgr and grub2-tools are already owned
+# by the pinned Fedora bootc base; grubby is the only missing runtime tool.
+grubby
+
+# Visual baseline: icons/cursor only. Keep fonts to hard dependencies for M0.
+breeze-icon-theme
+kf6-breeze-icons
+breeze-cursor-theme
+
+# Locales: English + Italian only; never glibc-all-langpacks.
+glibc-langpack-en
+glibc-langpack-it
+langpacks-core-en
+langpacks-core-it

@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule KrisOS package restore after boot
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=10min
+Unit=krisos-sync.service
+
+[Install]
+WantedBy=timers.target
