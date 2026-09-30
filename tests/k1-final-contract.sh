@@ -2,11 +2,11 @@
 set -euo pipefail
 
 source build_files/KrisOS-payload.lock
-test "$KRISOS_COMMIT" = "c23475bb8e1d516555903c1b590e65cd1243420f"
-test "$KRISOS_SOURCE_REF" = "ghcr.io/krism-eu/krisos45:build-36691073744-1"
+test "$KRISOS_COMMIT" = "613c430b2c7894778d76da085ddb0d206e201ee8"
+test "$KRISOS_SOURCE_REF" = "ghcr.io/krism-eu/krisos45:build-36748128019-1"
 test "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:m1"
-test "$KRISOS_DIGEST" = "sha256:51f7b103fa575e6d4b48c2dd47eccc641450d6138c5c703c228c5acf4c5cd2b8"
-test "$KRISOS_KRISCC" = "0.7.10-1.fc45.x86_64"
+test "$KRISOS_DIGEST" = "sha256:cd3363dec2573cde2fddd18de7833f3e5687a710d2362283e493e79433b5cd59"
+test "$KRISOS_KRISCC" = "0.8.1-1.fc45.x86_64"
 
 # Installer branch only: runtime source remains on main.
 test ! -e Containerfile
