@@ -14,12 +14,21 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$repo_root/installer/output"
 installer_image="${KRISOS_INSTALLER_IMAGE:-localhost/krisos-installer:k1.0}"
-payload_ref="${KRISOS_PAYLOAD_REF:?Set KRISOS_PAYLOAD_REF to the validated KrisOS update-channel reference}"
+source_ref="${KRISOS_SOURCE_REF:?Set KRISOS_SOURCE_REF to the validated immutable KrisOS build tag}"
+target_ref="${KRISOS_TARGET_REF:?Set KRISOS_TARGET_REF to the KrisOS update-channel reference}"
 payload_image_id="${KRISOS_PAYLOAD_IMAGE_ID:?Set KRISOS_PAYLOAD_IMAGE_ID to the verified local payload image ID}"
 image_builder_image="${IMAGE_BUILDER_IMAGE:-ghcr.io/osbuild/image-builder@sha256:ee8729672bb2e901a9942d1e272b615cd695a58f5417c73d3d0b1b275d833fc5}"
 
-if [[ "$payload_ref" == localhost/* || "$payload_ref" == *@sha256:* ]]; then
-    echo "Complete ISO builds require a published update-channel ref, not localhost or a digest target." >&2
+if [[ "$source_ref" == localhost/* || "$source_ref" == *@sha256:* ]]; then
+    echo "Complete ISO builds require a published immutable source tag, not localhost or a digest reference." >&2
+    exit 1
+fi
+if [[ "$target_ref" == localhost/* || "$target_ref" == *@sha256:* ]]; then
+    echo "Complete ISO builds require a published update-channel target tag." >&2
+    exit 1
+fi
+if [[ "$source_ref" == "$target_ref" ]]; then
+    echo "KrisOS source and update-channel target refs must remain distinct." >&2
     exit 1
 fi
 if [[ "$image_builder_image" != *@sha256:* ]]; then
@@ -30,12 +39,13 @@ fi
 sudo rm -rf -- "$output_dir"
 mkdir -p "$output_dir"
 
-printf 'Using pre-verified KrisOS payload channel: %s\n' "$payload_ref"
-if ! sudo podman image exists "$payload_ref"; then
-    echo "Verified local payload image is missing: $payload_ref" >&2
+printf 'Using pre-verified KrisOS source: %s\n' "$source_ref"
+printf 'Installed KrisOS update channel: %s\n' "$target_ref"
+if ! sudo podman image exists "$source_ref"; then
+    echo "Verified local payload image is missing: $source_ref" >&2
     exit 1
 fi
-payload_actual_id="$(sudo podman image inspect "$payload_ref" --format '{{.Id}}')"
+payload_actual_id="$(sudo podman image inspect "$source_ref" --format '{{.Id}}')"
 if [[ "$payload_actual_id" != "$payload_image_id" ]]; then
     printf 'Payload image ID mismatch: expected %s, got %s\n' "$payload_image_id" "$payload_actual_id" >&2
     exit 1
@@ -47,7 +57,8 @@ build_ok=0
 for attempt in 1 2 3; do
     if sudo podman build \
         --pull=always \
-        --build-arg KRISOS_PAYLOAD_REF="$payload_ref" \
+        --build-arg KRISOS_SOURCE_REF="$source_ref" \
+        --build-arg KRISOS_TARGET_REF="$target_ref" \
         -f "$repo_root/installer/Containerfile" \
         -t "$installer_image" \
         "$repo_root/installer"; then
@@ -72,7 +83,7 @@ if [[ "$builder_actual" != "$builder_expected" ]]; then
 fi
 printf 'Image Builder digest: %s\n' "$builder_actual"
 
-printf 'Building interactive bootc-generic-iso with embedded payload %s...\n' "$payload_ref"
+printf 'Building interactive bootc-generic-iso with embedded source %s...\n' "$source_ref"
 sudo podman run \
     --rm \
     --privileged \
@@ -84,7 +95,7 @@ sudo podman run \
     --with-manifest \
     --output-dir /output \
     --bootc-ref "$installer_image" \
-    --bootc-installer-payload-ref "$payload_ref" \
+    --bootc-installer-payload-ref "$source_ref" \
     --bootc-default-fs ext4 \
     bootc-generic-iso
 

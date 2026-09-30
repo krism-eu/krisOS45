@@ -1,6 +1,7 @@
 FROM quay.io/fedora/fedora-bootc:45
 
-ARG KRISOS_PAYLOAD_REF
+ARG KRISOS_SOURCE_REF
+ARG KRISOS_TARGET_REF
 ARG ANACONDA_NEVR=45.27-1.fc45
 
 # Fedora 45 Anaconda runtime for the recommended bootc-generic-iso image type.
@@ -35,6 +36,17 @@ RUN dnf install -qy --setopt=install_weak_deps=False \
     && grep -Fxq 'StandardInput=null' /usr/lib/systemd/system/anaconda-pre.service \
     && dnf clean all
 
+# KrisOS workaround retained from the validated installer lineage: Anaconda
+# 45.27 still invokes shadow-utils chage with -R against /mnt/sysroot. In a
+# bootc target that can enter the target after libselinux was initialized in
+# the live environment and abort. Keep Anaconda's account semantics but use
+# shadow-utils prefix mode (-P) for target operations.
+RUN python3 -c 'from pathlib import Path; ps=list(Path("/usr/lib64").glob("python*/site-packages/pyanaconda/core/users.py")); assert len(ps)==1, ps; p=ps[0]; s=p.read_text(); old="util.execWithRedirect(\"chage\", rootargs + [\"-d\", \"\", username])"; new="util.execWithRedirect(\"chage\", ([\"-P\", root] if root != \"/\" else []) + [\"-d\", \"\", username])"; assert s.count(old)==1, old; p.write_text(s.replace(old,new)); assert new in p.read_text()' && \
+    users_py="$(find /usr/lib64 -path '*/site-packages/pyanaconda/core/users.py' -print -quit)" && \
+    test -n "$users_py" && \
+    grep -Fq 'util.execWithRedirect("chage", (["-P", root] if root != "/" else []) + ["-d", "", username])' "$users_py" && \
+    ! grep -Fq 'util.execWithRedirect("chage", rootargs + ["-d", "", username])' "$users_py"
+
 # Fedora 43+ bootc installer images need the EFI tree materialized here.
 RUN mkdir -p /boot/efi && cp -ra /usr/lib/efi/*/*/EFI /boot/efi
 
@@ -47,30 +59,28 @@ COPY iso.yaml /usr/lib/image-builder/bootc/iso.yaml
 
 # Interactive defaults only: preselect payload and localization, never
 # partitioning, credentials, completion actions or unattended mode.
-RUN test -n "$KRISOS_PAYLOAD_REF" && \
+RUN test -n "$KRISOS_SOURCE_REF" && test -n "$KRISOS_TARGET_REF" && \
     printf '%s\n' \
     'graphical' \
     'lang it_IT.UTF-8' \
     'keyboard --vckeymap=it --xlayouts=it' \
     'timezone Europe/Rome --utc' \
     'selinux --enforcing' \
-    "bootc --source-imgref=registry:$KRISOS_PAYLOAD_REF --target-imgref=$KRISOS_PAYLOAD_REF" \
+    "bootc --source-imgref=registry:$KRISOS_SOURCE_REF --target-imgref=$KRISOS_TARGET_REF" \
     > /usr/share/anaconda/interactive-defaults.ks && \
     ! grep -Eq '^[[:space:]]*(clearpart|autopart|part|partition|logvol|volgroup|user|rootpw|reboot|shutdown)([[:space:]]|$)' \
       /usr/share/anaconda/interactive-defaults.ks
 
-# Installer-only finalization. Keep the live/target SELinux mode and interactive
-# partitioning flow unchanged; only reconcile the two host-specific states that
-# were proven during acceptance: bootc's fstab marker and, conditionally, the
-# four fresh-home SELinux labels through the payload's conservative helper.
+# Installer-only finalization. Preserve the proven bootc/composefs fstab
+# reconciliation. A physically separate home is assigned to /home in Anaconda;
+# home creation and SELinux labeling are left to Anaconda/bootc plus the payload
+# policy, matching the previously validated installer path.
 COPY krisos-fstab-finalize.ks /usr/share/anaconda/krisos-fstab-finalize.ks
-COPY krisos-home-labels-finalize.ks /usr/share/anaconda/krisos-home-labels-finalize.ks
 RUN cat \
       /usr/share/anaconda/krisos-fstab-finalize.ks \
-      /usr/share/anaconda/krisos-home-labels-finalize.ks \
       >> /usr/share/anaconda/interactive-defaults.ks && \
-    test "$(grep -c '^%post --nochroot --erroronfail$' /usr/share/anaconda/interactive-defaults.ks)" -eq 2 && \
-    test "$(grep -c '^%end$' /usr/share/anaconda/interactive-defaults.ks)" -eq 2
+    test "$(grep -c '^%post --nochroot --erroronfail$' /usr/share/anaconda/interactive-defaults.ks)" -eq 1 && \
+    test "$(grep -c '^%end$' /usr/share/anaconda/interactive-defaults.ks)" -eq 1
 
 # bootc-generic-iso does not run Lorax for us. These are the upstream-required
 # live-Anaconda runtime preparations; without them the ISO can build cleanly
@@ -84,7 +94,7 @@ RUN mv /usr/share/anaconda/list-harddrives-stub /usr/bin/list-harddrives && \
     ln -sf /lib/systemd/system/anaconda.target /etc/systemd/system/default.target && \
     rm -f /usr/lib/systemd/system-generators/systemd-gpt-auto-generator
 
-# Anaconda 45.25 carries the autovt alias/default instance and logind drop-in.
+# Anaconda 45.27 carries the autovt alias/default instance and logind drop-in.
 # Enable the upstream unit so systemd materializes those [Install] contracts;
 # do not recreate either file locally.
 # Fedora 45 ships autovt@.service already redirected to kmsconvt@.service.

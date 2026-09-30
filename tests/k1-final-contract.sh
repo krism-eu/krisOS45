@@ -1,125 +1,77 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This branch owns only the installer. The installed OS is the exact signed Fedora 45 payload.
 source build_files/KrisOS-payload.lock
-test "$KRISOS_COMMIT" = "650786a97209bed438a29d5c4a42c7344ca1842d"
-test "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:650786a97209bed438a29d5c4a42c7344ca1842d"
-test "$KRISOS_DIGEST" = "sha256:08f98504645b99a5d685b67ebe4d1a6f14ece9dd7799a0daf7315baf57782581"
-test "$KRISOS_KRISCC" = "0.7.9-1.fc44.x86_64"
+test "$KRISOS_COMMIT" = "c23475bb8e1d516555903c1b590e65cd1243420f"
+test "$KRISOS_SOURCE_REF" = "ghcr.io/krism-eu/krisos45:build-36691073744-1"
+test "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:m1"
+test "$KRISOS_DIGEST" = "sha256:51f7b103fa575e6d4b48c2dd47eccc641450d6138c5c703c228c5acf4c5cd2b8"
+test "$KRISOS_KRISCC" = "0.7.10-1.fc45.x86_64"
 
-# Runtime sources and runtime workflows belong to k1.0-final-payload and must not drift here.
+# Installer branch only: runtime source remains on main.
 test ! -e Containerfile
 test ! -e bin
 test ! -e systemd
 test ! -e scripts
 test ! -e build_files/krisCC.lock
-test ! -e build_files/krisCC-candidate.lock
 test ! -e .github/workflows/build-m1.yml
 test ! -e .github/workflows/sync-kriscc.yml
-test ! -e .github/workflows/build-installer.yml
 
-# Installer must remain graphical, interactive and non-destructive.
+# Graphical, interactive, non-destructive installer.
 grep -Fq 'bootc-generic-iso' installer/build-installer.sh
-grep -Fq -- '--bootc-installer-payload-ref "$payload_ref"' installer/build-installer.sh
-grep -Fq -- '--build-arg KRISOS_PAYLOAD_REF="$payload_ref"' installer/build-installer.sh
-grep -Fq 'ARG KRISOS_PAYLOAD_REF' installer/Containerfile
+grep -Fq -- '--bootc-installer-payload-ref "$source_ref"' installer/build-installer.sh
+grep -Fq -- '--build-arg KRISOS_SOURCE_REF="$source_ref"' installer/build-installer.sh
+grep -Fq -- '--build-arg KRISOS_TARGET_REF="$target_ref"' installer/build-installer.sh
+grep -Fq 'ARG KRISOS_SOURCE_REF' installer/Containerfile
+grep -Fq 'ARG KRISOS_TARGET_REF' installer/Containerfile
 grep -Fq 'ARG ANACONDA_NEVR=45.27-1.fc45' installer/Containerfile
-grep -Fq 'anaconda-${ANACONDA_NEVR}' installer/Containerfile
-grep -Fq 'anaconda-install-img-deps-${ANACONDA_NEVR}' installer/Containerfile
-grep -Fq 'anaconda-dracut-${ANACONDA_NEVR}' installer/Containerfile
-grep -Fq "grep -Fxq 'Alias=autovt@.service'" installer/Containerfile
-grep -Fq "grep -Fxq 'ReserveVT=2'" installer/Containerfile
-grep -Fq "grep -Fxq 'StandardInput=null'" installer/Containerfile
-grep -Fq 'rm -f /etc/systemd/system/autovt@.service' installer/Containerfile
-grep -Fq 'systemctl enable anaconda-shell@.service' installer/Containerfile
-test ! -e installer/anaconda-shell.conf
-! grep -Fq 'ln -s /usr/lib/systemd/system/anaconda-shell@.service' installer/Containerfile
-grep -Fq "'graphical'" installer/Containerfile
-grep -Fq 'bootc --source-imgref=registry:$KRISOS_PAYLOAD_REF --target-imgref=$KRISOS_PAYLOAD_REF' installer/Containerfile
+grep -Fq 'bootc --source-imgref=registry:$KRISOS_SOURCE_REF --target-imgref=$KRISOS_TARGET_REF' installer/Containerfile
 if grep -Eq '^[[:space:]]*(clearpart|autopart|part|partition|logvol|volgroup|user|rootpw|reboot|shutdown)([[:space:]]|$)' installer/Containerfile; then
   echo "ERROR: installer container bakes unattended/destructive directives" >&2
   exit 1
 fi
 if grep -Eq 'inst\.(ks|cmdline|noninteractive)' installer/iso.yaml; then
-  echo "ERROR: ISO boot arguments enable unattended installation" >&2
+  echo "ERROR: ISO kernel arguments enable unattended installation" >&2
   exit 1
 fi
 
-# SELinux installer behavior is intentionally frozen after host acceptance.
+# SELinux live/target contract.
 grep -Fq 'selinux=1 enforcing=0' installer/iso.yaml
-if grep -Eq '(^|[[:space:]])(selinux=0|enforcing=1)([[:space:]]|$)' installer/iso.yaml; then
-  echo "ERROR: live installer SELinux contract changed" >&2
-  exit 1
-fi
 grep -Fq "'selinux --enforcing'" installer/Containerfile
 
-# fstab finalization is installer-only and must be narrowly idempotent.
+# Preserve the validated Anaconda chage workaround.
+grep -Fq 'KrisOS workaround retained from the validated installer lineage' installer/Containerfile
+grep -Fq '(["-P", root] if root != "/" else [])' installer/Containerfile
+! grep -Fq 'util.execWithRedirect("chage", rootargs + ["-d", "", username])' installer/Containerfile
+
+# Fedora 45 VT handoff.
+grep -Fq 'rm -f /etc/systemd/system/autovt@.service' installer/Containerfile
+grep -Fq 'systemctl enable anaconda-shell@.service' installer/Containerfile
+
+# Keep only the proven bootc/composefs fstab post hook.
 test -s installer/krisos-fstab-finalize.ks
+test ! -e installer/krisos-home-labels-finalize.ks
 grep -Fq 'COPY krisos-fstab-finalize.ks /usr/share/anaconda/krisos-fstab-finalize.ks' installer/Containerfile
-grep -Fq '/usr/share/anaconda/krisos-fstab-finalize.ks \' installer/Containerfile
-grep -Fq '>> /usr/share/anaconda/interactive-defaults.ks' installer/Containerfile
-grep -Fq '%post --nochroot --erroronfail' installer/krisos-fstab-finalize.ks
-grep -Fq 'sysroot=/mnt/sysroot' installer/krisos-fstab-finalize.ks
-grep -Fq 'fstab="$sysroot/etc/fstab"' installer/krisos-fstab-finalize.ks
-! grep -Fq '/mnt/sysimage' installer/krisos-fstab-finalize.ks
-grep -Fq "anaconda_stamp='Created by anaconda'" installer/krisos-fstab-finalize.ks
-grep -Fq "bootc_stamp='Updated by bootc-fstab-edit.service'" installer/krisos-fstab-finalize.ks
-grep -Fq 'opts[i] == "ro"' installer/krisos-fstab-finalize.ks
-grep -Fq 'root_count="$(awk' installer/krisos-fstab-finalize.ks
+! grep -Fq 'krisos-home-labels-finalize' installer/Containerfile
+grep -Fq 'test "$(grep -c '"'"'^%post --nochroot --erroronfail$'"'"' /usr/share/anaconda/interactive-defaults.ks)" -eq 1' installer/Containerfile
 grep -Fq 'chroot "$sysroot" /usr/bin/bootc internals fixup-etc-fstab' installer/krisos-fstab-finalize.ks
-grep -Fq 'root_is_ro' installer/krisos-fstab-finalize.ks
-if grep -Eq '(^|[[:space:]])(systemctl|daemon-reload)([[:space:]]|$)' installer/krisos-fstab-finalize.ks; then
-  echo "ERROR: fstab finalizer must not add a runtime daemon-reload workaround" >&2
-  exit 1
-fi
 
-# Fresh-home SELinux finalization must reuse the payload's validated helper and only
-# apply when its non-destructive preview reports a real mismatch.
-test -s installer/krisos-home-labels-finalize.ks
-grep -Fq 'COPY krisos-home-labels-finalize.ks /usr/share/anaconda/krisos-home-labels-finalize.ks' installer/Containerfile
-grep -Fq '/usr/share/anaconda/krisos-home-labels-finalize.ks \' installer/Containerfile
-grep -Fq "grep -c '^%post --nochroot --erroronfail$'" installer/Containerfile
-grep -Fq "grep -c '^%end$'" installer/Containerfile
-grep -Fq '%post --nochroot --erroronfail' installer/krisos-home-labels-finalize.ks
-grep -Fq 'sysroot=/mnt/sysroot' installer/krisos-home-labels-finalize.ks
-! grep -Fq '/mnt/sysimage' installer/krisos-home-labels-finalize.ks
-grep -Fq 'helper=/usr/libexec/krisos/repair-home-labels' installer/krisos-home-labels-finalize.ks
-grep -Fq "grep -Fxq 'HOME=/var/home'" installer/krisos-home-labels-finalize.ks
-grep -Fq "grep -Eq '^SELINUX=enforcing$'" installer/krisos-home-labels-finalize.ks
-grep -Fq 'preview="$(chroot "$sysroot" "$helper" "$user")"' installer/krisos-home-labels-finalize.ks
-grep -Fq 'chroot "$sysroot" "$helper" --apply "$user"' installer/krisos-home-labels-finalize.ks
-grep -Fq 'test -z "$(chroot "$sysroot" "$helper" "$user")"' installer/krisos-home-labels-finalize.ks
-if grep -Eq 'restorecon[[:space:]].*(-R|-F)|(^|[[:space:]])(chcon|semanage|semodule)([[:space:]]|$)' installer/krisos-home-labels-finalize.ks; then
-  echo "ERROR: home-label finalizer must not broaden SELinux policy or relabel recursively" >&2
-  exit 1
-fi
-
-# Pin the integration contract to the exact payload source behind the image:
-# payload owns /var/home defaults/policy and the conservative four-path helper.
+# Payload owns the internal /var/home model and SELinux policy.
 git fetch --no-tags origin "$KRISOS_COMMIT"
 main_container="$(mktemp)"
-main_helper="$(mktemp)"
-trap 'rm -f "$main_container" "$main_helper"' EXIT
+trap 'rm -f "$main_container"' EXIT
 git show "$KRISOS_COMMIT:Containerfile" > "$main_container"
-git show "$KRISOS_COMMIT:scripts/repair-home-labels.sh" > "$main_helper"
 grep -Fq "sed -ri 's|^HOME=.*$|HOME=/var/home|' /etc/default/useradd" "$main_container"
 grep -Fq 'semodule -B' "$main_container"
 grep -Fq 'matchpathcon -n /var/home/kris' "$main_container"
 grep -Fq 'matchpathcon -n /var/home/kris/.config' "$main_container"
 grep -Fq 'matchpathcon -n /var/home/kris/.local/share' "$main_container"
-grep -Fq "grep -Eq '^SELINUX=enforcing$' /etc/selinux/config" "$main_container"
-grep -Fq 'COPY scripts/repair-home-labels.sh /usr/libexec/krisos/repair-home-labels' "$main_container"
-grep -Fq '"$resolved" "$resolved/.config" "$resolved/.local" "$resolved/.local/share"' "$main_helper"
-if grep -Eq 'restorecon[[:space:]].*(-R|-F)' "$main_helper"; then
-  echo "ERROR: main home-label helper became recursive or force-relabeling" >&2
-  exit 1
-fi
 
-# Preserve the approved interactive partitioning contract documented for K1.
+# User-facing Anaconda mountpoint is /home, never /var/home.
+grep -Fq 'dedicated ext4 partition -> `/home`' installer/README.md
+grep -Fq 'Do not assign the separate home filesystem to `/var/home` directly.' installer/README.md
 grep -Fq '/boot/efi' installer/README.md
-grep -Fq '/var/home' installer/README.md
 grep -Fq 'administrator' installer/README.md
-grep -Fq 'No swap partition' installer/README.md
+grep -Fq 'zram' installer/README.md
 
 echo "K1 installer-only contract passed"

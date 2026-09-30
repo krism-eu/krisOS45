@@ -1,97 +1,96 @@
 # KrisOS45 Fedora 45 installer
 
-This directory contains the minimal installer path for KrisOS.
+This directory contains the final-candidate installer path for KrisOS45.
 
 ## Goals
 
 - Fedora 45 Anaconda runtime pinned to 45.27-1.fc45, independent from the installed KrisOS payload.
 - `bootc-generic-iso`, not the legacy `anaconda-iso` path.
-- Exact validated KrisOS bootc payload embedded in the ISO, while Anaconda storage and user setup remain interactive.
-- No destructive automatic partitioning.
-- Manual ext4 layout with separate `/var/home` supported by Fedora 45 Anaconda.
-- Manual user creation: the intended desktop user must be marked as administrator (wheel); no account credentials or autologin are baked into the image.
-- Reduce avoidable disk-discovery delay without disabling generic storage discovery.
+- Embed the exact hardware-validated KrisOS45 payload while recording `m1` as the installed system's manual update channel.
+- Keep Anaconda storage and user setup interactive and non-destructive.
+- Use a physically separate ext4 home partition assigned to the logical `/home` mount point in Anaconda.
+- Keep the payload's OSTree/bootc model intact: `/home` resolves to persistent `/var/home`; Anaconda must not mount the separate home filesystem directly at `/var/home`.
+- Manual user creation: the desktop user must be marked as administrator (wheel); no credentials or autologin are baked into the image.
 
-## Build
+## Locked payload
 
-The supported offline build is `.github/workflows/build-k1-final-iso.yml` on
-`k1.0-final-iso`. It verifies the payload digest and Cosign identity,
-pulls by digest, assigns the locked target reference locally, and builds the ISO.
-The installer branch contains no duplicate KrisOS runtime source; post-install QA
-scripts are extracted from the exact Fedora 45 payload commit named by
-`build_files/KrisOS-payload.lock`.
+`build_files/KrisOS-payload.lock` separates the exact install source from the future update channel:
 
-For a local build, first reproduce that workflow's signature/digest verification
-and rootful Podman payload import. Then export `KRISOS_PAYLOAD_REF` to the locked
-published target and `KRISOS_PAYLOAD_IMAGE_ID` to the verified local image ID before
-running `bash installer/build-installer.sh` as a normal user with sudo access.
-The script refuses a missing or mismatched local payload. It requires Podman and
-uses Image Builder pinned by digest in the script; any IMAGE_BUILDER_IMAGE override
-must also be a digest reference. No `latest` default or tag-only override is used.
+- `KRISOS_SOURCE_REF` is the immutable successful build tag whose digest was validated on hardware;
+- `KRISOS_DIGEST` pins that source content exactly;
+- `KRISOS_TARGET_REF` is `ghcr.io/krism-eu/krisos45:m1`, recorded in the installed system for user-triggered future updates;
+- the ISO workflow verifies the payload's Cosign identity against `build-m1.yml@refs/heads/main`.
 
-The payload is embedded for offline installation. Partitioning and user creation
-remain interactive. Artifacts and SHA256SUMS are written under installer/output/.
+The ISO never rebuilds KrisOS itself.
 
 ## Installation layout
 
-Do not use automatic partition clearing while validating the installer. In Anaconda storage configuration, use the existing/free disk space and assign:
+In Anaconda storage configuration use the intended disk/free space and assign:
 
 - EFI System Partition -> `/boot/efi` (vfat)
 - dedicated ext4 partition -> `/boot`
 - dedicated ext4 partition -> `/`
-- dedicated ext4 partition -> `/var/home`
+- dedicated ext4 partition -> `/home`
 
-Do not select automatic storage, automatic partition clearing, LVM autopartitioning, or a swap partition for the K1.0 validation install.
+Do not assign the separate home filesystem to `/var/home` directly.
 
-`/var/home` is intentional: KrisOS exposes `/home` as a symlink to `/var/home`, matching bootc/OSTree conventions.
+`/home` is intentional in the installer UI. The KrisOS payload already owns the bootc/OSTree compatibility mapping to persistent `/var/home`, including `HOME=/var/home` as the image-level useradd/SELinux policy root.
 
-No swap partition is required; KrisOS uses zram.
+Do not use automatic partition clearing, LVM autopartitioning or a swap partition for the final validation install. KrisOS uses zram.
 
 ## User creation
 
-Keep user creation interactive in Anaconda. For the K1.0 physical validation:
+Keep user creation interactive:
 
 - create the intended desktop account manually;
-- enable the Anaconda **administrator** option so the account is a member of `wheel`;
+- enable the Anaconda **administrator** option so the account is in `wheel`;
 - do not enable automatic login;
-- do not bake a password, password hash, or user-specific secret into the installer image.
+- do not bake a password, password hash or user-specific secret into the installer image.
 
-KrisOS sets the image-level `useradd` default home root to `/var/home` and rebuilds the SELinux homedir policy before Anaconda creates users. The installed-system validation checks both `wheel` membership and the real `/var/home/<user>` SELinux label.
+## Fresh-install finalization
+
+The live installer remains SELinux-enabled/permissive (`selinux=1 enforcing=0`), while the installed KrisOS target is enforcing.
+
+The installer retains only the proven fresh-install adaptations:
+
+- Anaconda's target `chage` operation uses shadow-utils prefix mode (`-P`) instead of `-R`, preserving the previously validated bootc/libselinux workaround.
+- The bootc/composefs fstab finalizer remains in place.
+- There is **no installer-side home relabel hook**. With the separate filesystem assigned to `/home`, Anaconda/bootc and the payload policy own home creation and labeling. Post-install QA checks the result before any repair is considered.
+- Fedora 45's live-image `autovt@.service` alias is removed before enabling Anaconda's own VT alias.
+
+These are installer-only adaptations; they do not alter the KrisOS runtime payload.
+
+## Build
+
+The supported build is `.github/workflows/build-k1-final-iso.yml` on `k1.0-final-iso`.
+
+For a local reproduction, first verify the exact source digest/signature and import that image into rootful Podman. Then set:
+
+- `KRISOS_SOURCE_REF` to the validated immutable build tag;
+- `KRISOS_TARGET_REF` to the intended update-channel tag;
+- `KRISOS_PAYLOAD_IMAGE_ID` to the verified local source image ID.
+
+Run `bash installer/build-installer.sh` as a normal user with sudo access. The script uses Image Builder pinned by digest and refuses localhost/digest refs where a published tag is required.
+
+Artifacts and `SHA256SUMS` are written below `installer/output/`.
 
 ## Disk discovery policy
 
-The ISO boot entry currently adds:
+The ISO boot entry keeps:
 
 - `inst.wait_for_disks=0`
 - `inst.noibft`
 
-This removes Anaconda's extra wait and avoids iBFT probing. We intentionally do **not** disable multipath, mdraid, LVM, USB, device-mapper, or generic block probing yet. Fedora 45 must first be measured on the physical validation machine; only a confirmed slow subsystem should be disabled.
+It does not disable generic USB, device-mapper, multipath, mdraid or LVM discovery.
 
 ## Installer interaction contract
 
-The ISO starts the normal graphical Anaconda flow. It does **not** provide
-`clearpart`, `autopart`, `part`, `user`, `rootpw`, `reboot` or
-`shutdown` directives, and the boot entry does not use `inst.ks=`,
-`inst.cmdline` or `inst.noninteractive`.
+The ISO starts graphical Anaconda. It does not provide `clearpart`, `autopart`, `part`, `user`, `rootpw`, `reboot` or `shutdown` directives, and does not use `inst.ks=`, `inst.cmdline` or `inst.noninteractive`.
 
-Only the bootc payload source/target is preselected. Storage, formatting and
-desktop-user creation remain explicit installer choices. The payload container
-is embedded by Image Builder through `--bootc-installer-payload-ref`; this
-option is used with the recommended `bootc-generic-iso` image type and does
-not select the historical `bootc-installer` image type.
+The exact immutable source payload is embedded through `--bootc-installer-payload-ref`; the installed target image reference is the separate `m1` channel.
 
-## Security note
+## Security
 
-The ISO boot entry explicitly uses `selinux=1 enforcing=0`. This keeps the SELinux LSM and policy active in the live installer while making access denials permissive during the Anaconda runtime. `selinux=0` is forbidden because it disables SELinux rather than merely relaxing enforcement, and `enforcing=1` is forbidden for the live installer because the container-derived installer tree is not validated for enforcing-mode boot.
+The live ISO explicitly uses `selinux=1 enforcing=0`; the installed target explicitly uses `selinux --enforcing`. `selinux=0` is forbidden.
 
-The interactive Anaconda defaults explicitly contain `selinux --enforcing` for the installed system. The embedded KrisOS payload also carries `SELINUX=enforcing` in `/etc/selinux/config`. Post-install validation must confirm `getenforce == Enforcing` and that the installed kernel command line contains neither `selinux=0` nor `enforcing=0`.
-
-`SHA256SUMS` detects corruption or accidental changes to a downloaded installer artifact. It is not a replacement for a future signed-release policy such as Cosign.
-
-## Fedora 45 VT handoff
-
-Fedora 45 may provide `autovt@.service` as a live-image alias to
-`kmsconvt@.service`. The installer image removes that alias immediately before
-enabling Anaconda's own `anaconda-shell@.service` alias. This change is confined
-to the installer runtime; the installed KrisOS45 payload retains its own Fedora
-45 console policy.
+Post-install validation must confirm SELinux Enforcing, the `/home -> /var/home` model, the separate home filesystem, correct labels, correct ESP/fstab/bootloader state and a clean first reboot.

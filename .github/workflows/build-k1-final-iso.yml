@@ -47,9 +47,12 @@ jobs:
           grep -Fq 'inst.stage2=hd:LABEL=Fedora-S-dvd-x86_64-45' installer/iso.yaml
           grep -Fq 'bootc-generic-iso' installer/build-installer.sh
           grep -Fq -- '--bootc-default-fs ext4' installer/build-installer.sh
-          grep -Fq -- '--bootc-installer-payload-ref "$payload_ref"' installer/build-installer.sh
-          grep -Fq -- '--build-arg KRISOS_PAYLOAD_REF="$payload_ref"' installer/build-installer.sh
-          grep -Fq 'bootc --source-imgref=registry:$KRISOS_PAYLOAD_REF --target-imgref=$KRISOS_PAYLOAD_REF' installer/Containerfile
+          grep -Fq -- '--bootc-installer-payload-ref "$source_ref"' installer/build-installer.sh
+          grep -Fq -- '--build-arg KRISOS_SOURCE_REF="$source_ref"' installer/build-installer.sh
+          grep -Fq -- '--build-arg KRISOS_TARGET_REF="$target_ref"' installer/build-installer.sh
+          grep -Fq 'bootc --source-imgref=registry:$KRISOS_SOURCE_REF --target-imgref=$KRISOS_TARGET_REF' installer/Containerfile
+          grep -Fq 'KrisOS workaround retained from the validated installer lineage' installer/Containerfile
+          grep -Fq '(["-P", root] if root != "/" else [])' installer/Containerfile
           if grep -Eq '^[[:space:]]*(clearpart|autopart|part|partition|logvol|volgroup|user|rootpw|reboot|shutdown)([[:space:]]|$)' installer/Containerfile; then
             echo "ERROR: installer runtime contains unattended/destructive directives" >&2
             exit 1
@@ -81,31 +84,33 @@ jobs:
           set -euo pipefail
           source build_files/KrisOS-payload.lock
           [[ "$KRISOS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:$KRISOS_COMMIT" ]]
+          [[ "$KRISOS_SOURCE_REF" =~ ^ghcr\.io/krism-eu/krisos45:build-[0-9]+-[0-9]+$ ]]
+          [[ "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:m1" ]]
           [[ "$KRISOS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$KRISOS_KRISCC" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc(44|45)\.x86_64$ ]]
+          [[ "$KRISOS_KRISCC" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc45\.x86_64$ ]]
 
           authfile="$(mktemp)"
           trap 'rm -f "$authfile"' EXIT
           printf '{"auths":{}}\n' > "$authfile"
 
-          skopeo inspect --raw --authfile "$authfile" "docker://$KRISOS_TARGET_REF" > main-manifest.json
+          skopeo inspect --raw --authfile "$authfile" "docker://$KRISOS_SOURCE_REF" > main-manifest.json
           remote_digest="sha256:$(sha256sum main-manifest.json | awk '{print $1}')"
           test "$remote_digest" = "$KRISOS_DIGEST"
           printf '%s\n' "$remote_digest" > main-payload.digest
+          skopeo inspect --authfile "$authfile" "docker://$KRISOS_TARGET_REF" >/dev/null
 
           cosign verify \
-            --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/build-m1.yml@refs/heads/k1.0-final-payload' \
+            --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/build-m1.yml@refs/heads/main' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "ghcr.io/krism-eu/krisos45@$KRISOS_DIGEST" 2>&1 | tee main-cosign-verify.log
 
           digest_ref="ghcr.io/krism-eu/krisos45@$KRISOS_DIGEST"
           sudo podman pull --authfile "$authfile" "$digest_ref"
-          sudo podman tag "$digest_ref" "$KRISOS_TARGET_REF"
-          test "$(sudo podman image inspect "$KRISOS_TARGET_REF" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$KRISOS_COMMIT"
-          image_id="$(sudo podman image inspect "$KRISOS_TARGET_REF" --format '{{.Id}}')"
+          sudo podman tag "$digest_ref" "$KRISOS_SOURCE_REF"
+          test "$(sudo podman image inspect "$KRISOS_SOURCE_REF" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$KRISOS_COMMIT"
+          image_id="$(sudo podman image inspect "$KRISOS_SOURCE_REF" --format '{{.Id}}')"
 
-          sudo podman run --rm -e KRISOS_EXPECT_KRISCC="$KRISOS_KRISCC" --entrypoint /bin/bash "$KRISOS_TARGET_REF" -lc '
+          sudo podman run --rm -e KRISOS_EXPECT_KRISCC="$KRISOS_KRISCC" --entrypoint /bin/bash "$KRISOS_SOURCE_REF" -lc '
             set -euo pipefail
             test "$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}" krisCC)" = "$KRISOS_EXPECT_KRISCC"
             rpm -V krisCC
@@ -115,11 +120,20 @@ jobs:
             python3 -c '"'"'import json; d=json.load(open("/tmp/rk-status.json")); assert d.get("schema")==1; assert all(k in d for k in ("overlay","pending_recovery","needs_sync","requests")); assert isinstance(d["requests"], list)'"'"'
             grep -Fxq "HOME=/var/home" /etc/default/useradd
             grep -Fxq krisCC /usr/share/krisos/owned-packages.txt
+            rpm -q libcanberra-backend-pulse
+            test -f /usr/lib64/libcanberra-0.30/libcanberra-pulse.so
+            crypt_img="/usr/lib/modules/$(ls /usr/lib/modules | head -n1)/initramfs.img"
+            test -s "$crypt_img"
+            lsinitrd -f /usr/lib/systemd/system-generators/dracut-crypt-generator "$crypt_img" > /tmp/dracut-crypt-generator
+            grep -Fq "[ -e /etc/crypttab ] || exit 0" /tmp/dracut-crypt-generator
+            grep -Fq "[ -n \"\$GENERATOR_DIR\" ] || exit 1" /tmp/dracut-crypt-generator
+            ! grep -Fq "[ -e /etc/crypttab ] || return 0" /tmp/dracut-crypt-generator
             bootc container lint
             env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic KRISCC_SMOKE_TEST=1 /usr/bin/krisCC --background
           '
 
-          echo "ref=$KRISOS_TARGET_REF" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$KRISOS_SOURCE_REF" >> "$GITHUB_OUTPUT"
+          echo "target_ref=$KRISOS_TARGET_REF" >> "$GITHUB_OUTPUT"
           echo "digest=$KRISOS_DIGEST" >> "$GITHUB_OUTPUT"
           echo "commit=$KRISOS_COMMIT" >> "$GITHUB_OUTPUT"
           echo "kriscc=$KRISOS_KRISCC" >> "$GITHUB_OUTPUT"
@@ -142,17 +156,20 @@ jobs:
       - name: Validate interactive installer runtime
         shell: bash
         env:
-          KRISOS_PAYLOAD_REF: ${{ steps.main_payload.outputs.ref }}
+          KRISOS_SOURCE_REF: ${{ steps.main_payload.outputs.source_ref }}
+          KRISOS_TARGET_REF: ${{ steps.main_payload.outputs.target_ref }}
         run: |
           set -euo pipefail
           sudo podman build \
             --pull=always \
-            --build-arg KRISOS_PAYLOAD_REF="$KRISOS_PAYLOAD_REF" \
+            --build-arg KRISOS_SOURCE_REF="$KRISOS_SOURCE_REF" \
+            --build-arg KRISOS_TARGET_REF="$KRISOS_TARGET_REF" \
             -f installer/Containerfile \
             -t localhost/krisos-installer-contract:k1.0 \
             installer
           sudo podman run --rm \
-            -e KRISOS_PAYLOAD_REF="$KRISOS_PAYLOAD_REF" \
+            -e KRISOS_SOURCE_REF="$KRISOS_SOURCE_REF" \
+            -e KRISOS_TARGET_REF="$KRISOS_TARGET_REF" \
             --entrypoint /bin/bash localhost/krisos-installer-contract:k1.0 -lc '
             set -euo pipefail
             defaults=/usr/share/anaconda/interactive-defaults.ks
@@ -162,9 +179,12 @@ jobs:
             grep -Fxq "keyboard --vckeymap=it --xlayouts=it" "$defaults"
             grep -Fxq "timezone Europe/Rome --utc" "$defaults"
             grep -Fxq "selinux --enforcing" "$defaults"
-            grep -Fxq "bootc --source-imgref=registry:$KRISOS_PAYLOAD_REF --target-imgref=$KRISOS_PAYLOAD_REF" "$defaults"
-            test "$(grep -c "^%post --nochroot --erroronfail$" "$defaults")" -eq 2
-            test "$(grep -c "^%end$" "$defaults")" -eq 2
+            grep -Fxq "bootc --source-imgref=registry:$KRISOS_SOURCE_REF --target-imgref=$KRISOS_TARGET_REF" "$defaults"
+            test "$(grep -c "^%post --nochroot --erroronfail$" "$defaults")" -eq 1
+            test "$(grep -c "^%end$" "$defaults")" -eq 1
+            users_py="$(find /usr/lib64 -path "*/site-packages/pyanaconda/core/users.py" -print -quit)"
+            test -n "$users_py"
+            grep -Fq "util.execWithRedirect(\"chage\", ([\"-P\", root] if root != \"/\" else []) + [\"-d\", \"\", username])" "$users_py"
             ! grep -Eq "^[[:space:]]*(clearpart|autopart|part|partition|logvol|volgroup|user|rootpw|reboot|shutdown)([[:space:]]|$)" "$defaults"
             getent passwd install | grep -Fq "/usr/libexec/anaconda/run-anaconda"
             test -x /usr/bin/list-harddrives
@@ -186,7 +206,8 @@ jobs:
       - name: Build offline Anaconda ISO from exact Fedora 45 payload
         shell: bash
         env:
-          KRISOS_PAYLOAD_REF: ${{ steps.main_payload.outputs.ref }}
+          KRISOS_SOURCE_REF: ${{ steps.main_payload.outputs.source_ref }}
+          KRISOS_TARGET_REF: ${{ steps.main_payload.outputs.target_ref }}
           KRISOS_PAYLOAD_IMAGE_ID: ${{ steps.main_payload.outputs.image_id }}
         run: |
           set -euo pipefail
@@ -195,7 +216,8 @@ jobs:
       - name: Verify and seal ISO bundle
         shell: bash
         env:
-          MAIN_REF: ${{ steps.main_payload.outputs.ref }}
+          MAIN_SOURCE_REF: ${{ steps.main_payload.outputs.source_ref }}
+          MAIN_TARGET_REF: ${{ steps.main_payload.outputs.target_ref }}
           MAIN_DIGEST: ${{ steps.main_payload.outputs.digest }}
           MAIN_COMMIT: ${{ steps.main_payload.outputs.commit }}
           MAIN_KRISCC: ${{ steps.main_payload.outputs.kriscc }}
@@ -214,7 +236,7 @@ jobs:
 
           manifest="$(find installer/output -type f -name '*.osbuild-manifest.json' -print -quit)"
           test -n "$manifest"
-          python3 - "$manifest" "$MAIN_REF" <<'PY'
+          python3 - "$manifest" "$MAIN_SOURCE_REF" <<'PY'
           import json, sys
           with open(sys.argv[1], encoding="utf-8") as stream:
               manifest = json.load(stream)
@@ -242,7 +264,8 @@ jobs:
           cp main-qa/* installer/output/qa/
 
           cat > installer/output/BUILD_IDENTITY.txt <<EOF
-          main_ref=$MAIN_REF
+          source_ref=$MAIN_SOURCE_REF
+          target_ref=$MAIN_TARGET_REF
           main_digest=$MAIN_DIGEST
           main_commit=$MAIN_COMMIT
           kriscc=$MAIN_KRISCC
