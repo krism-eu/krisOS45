@@ -93,6 +93,7 @@ jobs:
           grep -Fxq isoimagewriter build_files/base-packages.txt
           grep -Fxq plasma-discover build_files/base-packages.txt
           grep -Fxq plasma-discover-flatpak build_files/base-packages.txt
+          grep -Fxq libcanberra-backend-pulse build_files/base-packages.txt
           grep -Fxq cockpit build_files/base-packages.txt
           ! grep -Fxq gwenview build_files/base-packages.txt
           grep -Fxq 'Hidden=true' build_files/krisCC-autostart.desktop
@@ -114,6 +115,8 @@ jobs:
           grep -Fq 'HOME=/var/home' Containerfile
           grep -Fq 'semodule -B' Containerfile
           grep -Fq 'dracut --force --no-hostonly --early-microcode --reproducible --zstd' Containerfile
+          grep -Fq 'dracut-crypt-generator' Containerfile
+          grep -Fq 'libcanberra-pulse.so' Containerfile
           grep -Fq 'AuthenticAMD.bin' Containerfile
           grep -Fq 'rtl8168-source-nevra.txt' Containerfile
           grep -Fq '/usr/share/krisos/firmware-provenance/rtl8168h-2-source-nevra.txt' Containerfile
@@ -276,7 +279,8 @@ jobs:
           sudo podman run --rm -e KRISCC_EXPECTED="$expected_kriscc" --entrypoint /bin/bash localhost/krisos45:m1 -lc '
             test "$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}" krisCC)" = "$KRISCC_EXPECTED" &&
             rpm -V krisCC &&
-            rpm -q iputils plasma-milou upower p11-kit-server nano isoimagewriter plasma-discover plasma-discover-flatpak cockpit cockpit-system cockpit-ws &&
+            rpm -q iputils plasma-milou upower p11-kit-server nano isoimagewriter plasma-discover plasma-discover-flatpak libcanberra-backend-pulse cockpit cockpit-system cockpit-ws &&
+            test -f /usr/lib64/libcanberra-0.30/libcanberra-pulse.so &&
             ! rpm -q gwenview >/dev/null 2>&1 &&
             ! rpm -q plasma-discover-notifier >/dev/null 2>&1 &&
             ! rpm -q plasma-discover-packagekit >/dev/null 2>&1 &&
@@ -289,6 +293,12 @@ jobs:
             grep -Fxq "HOME=/var/home" /etc/default/useradd &&
             matchpathcon -n /var/home/kris | grep -q ":user_home_dir_t:" &&
             test -s "/usr/lib/modules/$(ls /usr/lib/modules | head -n1)/initramfs.img" &&
+            crypt_img="/usr/lib/modules/$(ls /usr/lib/modules | head -n1)/initramfs.img" &&
+            lsinitrd -f /usr/lib/systemd/system-generators/dracut-crypt-generator "$crypt_img" > /tmp/dracut-crypt-generator &&
+            grep -Fq "[ -e /etc/crypttab ] || exit 0" /tmp/dracut-crypt-generator &&
+            grep -Fq "[ -n \"\$GENERATOR_DIR\" ] || exit 1" /tmp/dracut-crypt-generator &&
+            ! grep -Fq "[ -e /etc/crypttab ] || return 0" /tmp/dracut-crypt-generator &&
+            ! grep -Fq "[ -n \"\$GENERATOR_DIR\" ] || return 1" /tmp/dracut-crypt-generator &&
             systemctl is-enabled krisos-sync.timer | grep -qx enabled &&
             systemctl is-enabled cockpit.socket 2>&1 | grep -qx disabled &&
             grep -Fxq krisCC /usr/share/krisos/owned-packages.txt &&

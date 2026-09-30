@@ -149,6 +149,7 @@ RUN set -eux; \
       amd-ucode-firmware \
       mesa-dri-drivers \
       mesa-vulkan-drivers \
+      libcanberra-backend-pulse \
       udisks2 \
       dolphin \
       konsole \
@@ -183,6 +184,7 @@ RUN set -eux; \
       grubby; \
     rpm -q --whatprovides mesa-va-drivers; \
     test -e /usr/lib64/dri/radeonsi_drv_video.so; \
+    test -f /usr/lib64/libcanberra-0.30/libcanberra-pulse.so; \
     test -f /usr/lib/firmware/rtl_nic/rtl8168h-2.fw.xz; \
     assert_absent linux-firmware; \
     if rpm -qa --qf '%{ARCH}\n' | grep -qx i686; then \
@@ -260,6 +262,28 @@ COPY build_files/krisCC-autostart.desktop /etc/xdg/autostart/krisCC-background.d
 COPY build_files/99krisos-nss/ /usr/lib/dracut/modules.d/99krisos-nss/
 COPY scripts/check-initramfs-accounts.sh /tmp/check-initramfs-accounts.sh
 
+# Fedora 45 dracut 111-4 carries upstream dracut-ng #2490: the installed
+# 70crypt generator uses top-level return statements, which systemd executes as
+# a standalone generator and reports as exit status 2. Apply only the exact
+# known-bad form; newer Fedora dracut builds that already contain the upstream
+# exit-based fix pass through unchanged.
+RUN set -eux; \
+    generator=/usr/lib/dracut/modules.d/70crypt/crypt-generator.sh; \
+    test -f "$generator"; \
+    if grep -Fxq '[ -e /etc/crypttab ] || return 0' "$generator" && \
+       grep -Fxq '[ -n "$GENERATOR_DIR" ] || return 1' "$generator"; then \
+      sed -i \
+        -e 's/^    return 0$/    exit 0/' \
+        -e 's/^\[ -e \/etc\/crypttab \] || return 0$/[ -e \/etc\/crypttab ] || exit 0/' \
+        -e 's/^\[ -n "\$GENERATOR_DIR" \] || return 1$/[ -n "\$GENERATOR_DIR" ] || exit 1/' \
+        "$generator"; \
+    fi; \
+    grep -Fxq '    exit 0' "$generator"; \
+    grep -Fxq '[ -e /etc/crypttab ] || exit 0' "$generator"; \
+    grep -Fxq '[ -n "$GENERATOR_DIR" ] || exit 1' "$generator"; \
+    ! grep -Fxq '[ -e /etc/crypttab ] || return 0' "$generator"; \
+    ! grep -Fxq '[ -n "$GENERATOR_DIR" ] || return 1' "$generator"
+
 # Fedora's canonical bootc initramfs must be regenerated after the KrisOS
 # hardware firmware delta is installed. The pinned base initramfs predates the
 # layered amd-ucode-firmware package; without this rebuild the deployed /boot
@@ -277,6 +301,14 @@ RUN set -eux; \
       test -s "$kernel_dir/initramfs.img"; \
       lsinitrd "$kernel_dir/initramfs.img" | grep -F 'kernel/x86/microcode/AuthenticAMD.bin' >/dev/null; \
       bash /tmp/check-initramfs-accounts.sh "$kernel_dir/initramfs.img"; \
+      lsinitrd -f /usr/lib/systemd/system-generators/dracut-crypt-generator \
+        "$kernel_dir/initramfs.img" > /tmp/dracut-crypt-generator; \
+      grep -Fxq '    exit 0' /tmp/dracut-crypt-generator; \
+      grep -Fxq '[ -e /etc/crypttab ] || exit 0' /tmp/dracut-crypt-generator; \
+      grep -Fxq '[ -n "$GENERATOR_DIR" ] || exit 1' /tmp/dracut-crypt-generator; \
+      ! grep -Fxq '    return 0' /tmp/dracut-crypt-generator; \
+      ! grep -Fxq '[ -e /etc/crypttab ] || return 0' /tmp/dracut-crypt-generator; \
+      ! grep -Fxq '[ -n "$GENERATOR_DIR" ] || return 1' /tmp/dracut-crypt-generator; \
       generated=$((generated + 1)); \
     done; \
     test "$generated" -eq 1; \
@@ -399,6 +431,8 @@ RUN set -eux; \
     test -x /usr/bin/ark; \
     test -x /usr/bin/isoimagewriter; \
     test -x /usr/bin/plasma-discover; \
+    rpm -q libcanberra-backend-pulse; \
+    test -f /usr/lib64/libcanberra-0.30/libcanberra-pulse.so; \
     test -x /usr/libexec/cockpit-tls; \
     test -x /usr/bin/okular; \
     test -x /usr/bin/kcalc; \

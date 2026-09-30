@@ -94,6 +94,9 @@ mesa-dri-drivers
 mesa-vulkan-drivers
 
 # Audio/session plumbing. No JACK/pro-audio or Phonon root in M0.
+# Plasma startup sound uses libcanberra through the Pulse compatibility layer;
+# keep the backend explicit because Fedora 45 splits it from libcanberra.
+libcanberra-backend-pulse
 pipewire
 pipewire-alsa
 pipewire-pulseaudio
