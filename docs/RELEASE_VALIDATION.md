@@ -90,7 +90,7 @@ review deve stabilire se la deriva è attesa.
 
 ## Adozione krisCC
 
-`sync-kriscc.yml` accetta un tag stable `vX.Y.Z` (per esempio `v0.8.0`), valida
+`sync-kriscc.yml` accetta un tag release `vX.Y.Z` (per esempio `v0.8.1`), valida
 il candidato in una build KrisOS45 e apre una PR che modifica il lock. Non pusha
 più direttamente su `main`. Il merge deliberato della PR avvia il
 normale workflow della branch release.

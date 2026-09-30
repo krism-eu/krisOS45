@@ -55,9 +55,9 @@ qualunque possibile redirezione verso `/var`.
 
 ## krisCC temporaneo
 
-Il payload congela `krisCC 0.7.10-1.fc45.x86_64`, bloccato dal
-lock SHA-256. Fedora 45/RPM 6 richiede la verifica firma per default e il vecchio
-artefatto non è firmato, quindi il Containerfile mantiene una singola eccezione
+Il payload congela `krisCC 0.8.1-1.fc45.x86_64`, bloccato dal
+lock SHA-256. Fedora 45/RPM 6 richiede la verifica firma per default e l'asset
+custom non è firmato, quindi il Containerfile mantiene una singola eccezione
 `--nosignature` limitata a quel file dopo il controllo del lock.
 
 Questa è una compatibilità temporanea limitata alla firma dell'asset custom:
