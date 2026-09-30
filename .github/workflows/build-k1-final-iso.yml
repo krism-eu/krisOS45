@@ -2,7 +2,7 @@ name: Build K1 Final ISO Candidate
 
 on:
   push:
-    branches: [k1.0-final-iso]
+    branches: [iso]
   workflow_dispatch:
 
 permissions:

@@ -62,7 +62,7 @@ These are installer-only adaptations; they do not alter the KrisOS runtime paylo
 
 ## Build
 
-The supported build is `.github/workflows/build-k1-final-iso.yml` on `k1.0-final-iso`.
+The supported build is `.github/workflows/build-k1-final-iso.yml` on `iso`.
 
 For a local reproduction, first verify the exact source digest/signature and import that image into rootful Podman. Then set:
 
