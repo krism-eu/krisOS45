@@ -517,14 +517,7 @@ RUN set -eux; \
 COPY build_files/60-krisos-runtime-state.conf /usr/lib/tmpfiles.d/60-krisos-runtime-state.conf
 
 RUN set -eux; \
-    rm -rf \
-      /run/cockpit \
-      /run/cups \
-      /run/dnf \
-      /run/mdadm \
-      /run/plasmalogin \
-      /run/samba \
-      /run/selinux-policy; \
+    find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; \
     rm -rf \
       /var/cache/fwupd \
       /var/cache/libdnf5 \
@@ -545,6 +538,8 @@ RUN set -eux; \
       /var/spool/cups; \
     rm -f \
       /var/lib/authselect/checksum \
+      /var/lib/systemd/catalog/database \
+      /var/lib/systemd/random-seed \
       /var/log/dnf5.log \
       /var/log/dnf5.log.* \
       /var/cache/ldconfig/aux-cache; \

@@ -66,6 +66,11 @@ jobs:
           grep -Fxq 'ARG BASE_IMAGE=quay.io/bootc-devel/fedora-bootc-45-minimal:latest' Containerfile
           grep -Fq "distro-sync" Containerfile
           test -s build_files/60-krisos-runtime-state.conf
+          grep -Fxq 'd /var/lib/containers 0755 root root - -' build_files/60-krisos-runtime-state.conf
+          grep -Fxq 'd /var/lib/tpm2-tss 0755 root root - -' build_files/60-krisos-runtime-state.conf
+          grep -Fxq 'd /var/lib/tpm2-tss/system 0755 root root - -' build_files/60-krisos-runtime-state.conf
+          grep -Fq 'find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' Containerfile
+          grep -Fq '/var/lib/systemd/random-seed' Containerfile
           grep -Fq 'bootc container lint --fatal-warnings' Containerfile
           grep -Fq "'/usr/share/dnf5'" bin/rk
           grep -Fq "'/usr/share/pki/rpm-gpg'" bin/rk
