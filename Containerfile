@@ -517,7 +517,7 @@ RUN set -eux; \
 COPY build_files/60-krisos-runtime-state.conf /usr/lib/tmpfiles.d/60-krisos-runtime-state.conf
 
 RUN set -eux; \
-    find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; \
+    find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true; \
     rm -rf \
       /var/cache/fwupd \
       /var/cache/libdnf5 \

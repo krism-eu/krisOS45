@@ -69,7 +69,7 @@ jobs:
           grep -Fxq 'd /var/lib/containers 0755 root root - -' build_files/60-krisos-runtime-state.conf
           grep -Fxq 'd /var/lib/tpm2-tss 0755 root root - -' build_files/60-krisos-runtime-state.conf
           grep -Fxq 'd /var/lib/tpm2-tss/system 0755 root root - -' build_files/60-krisos-runtime-state.conf
-          grep -Fq 'find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +' Containerfile
+          grep -Fq 'find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true' Containerfile
           grep -Fq '/var/lib/systemd/random-seed' Containerfile
           grep -Fq 'bootc container lint --fatal-warnings' Containerfile
           grep -Fq "'/usr/share/dnf5'" bin/rk
