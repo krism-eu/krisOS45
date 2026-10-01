@@ -232,6 +232,7 @@ COPY bin/rk /usr/bin/rk
 RUN chmod 0755 /usr/bin/rk
 COPY systemd/krisos-sync.service /usr/lib/systemd/system/krisos-sync.service
 COPY systemd/krisos-sync.timer /usr/lib/systemd/system/krisos-sync.timer
+COPY systemd/krisos-bluetooth-firstboot.service /usr/lib/systemd/system/krisos-bluetooth-firstboot.service
 
 # Persistent /usr overlay. Mount it in early real-root userspace rather than in
 # initrd: OSTree has already exposed writable /var, while local-fs.target still
@@ -371,6 +372,7 @@ RUN set -eux; \
     firewall-offline-cmd --zone=public --remove-service-from-zone=mdns; \
     systemctl enable krisos-overlay.service; \
     systemctl enable krisos-sync.timer; \
+    systemctl enable krisos-bluetooth-firstboot.service; \
     systemctl enable --force plasmalogin.service; \
     systemctl enable firewalld.service; \
     systemctl enable systemd-timesyncd.service; \

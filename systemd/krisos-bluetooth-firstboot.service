@@ -1,0 +1,13 @@
+[Unit]
+Description=KrisOS initial Bluetooth radio policy
+ConditionPathExists=!/var/lib/krisos/bluetooth-initialized
+Before=bluetooth.service
+Before=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rfkill block bluetooth
+ExecStart=/usr/bin/touch /var/lib/krisos/bluetooth-initialized
+
+[Install]
+WantedBy=multi-user.target
