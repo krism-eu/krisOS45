@@ -20,34 +20,25 @@ source "$lock"
 : "${KRISCC_RPM:?KRISCC_RPM missing from lock}"
 : "${KRISCC_SHA256:?KRISCC_SHA256 missing from lock}"
 
-# Accept the current legacy candidate tag (vX.Y.Z-N) and the public stable
-# contract (vX.Y.Z). In both cases derive the exact RPM NEVRA from the tag
-# instead of weakening filename or package-metadata validation.
+# KrisOS45 accepts the stable krisCC tag contract vX.Y.Z and its Fedora 45 RPM.
 if [[ "$KRISCC_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
   expected_version="${BASH_REMATCH[1]}"
-  expected_build="1"
-elif [[ "$KRISCC_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)$ ]]; then
-  expected_version="${BASH_REMATCH[1]}"
-  expected_build="${BASH_REMATCH[2]}"
 else
   echo "Invalid KRISCC_TAG: $KRISCC_TAG" >&2
   exit 1
 fi
 
-if [[ "$KRISCC_RPM" =~ ^krisCC-([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)\.fc(44|45)\.x86_64\.rpm$ ]]; then
+if [[ "$KRISCC_RPM" =~ ^krisCC-([0-9]+\.[0-9]+\.[0-9]+)-1\.fc45\.x86_64\.rpm$ ]]; then
   rpm_version="${BASH_REMATCH[1]}"
-  rpm_build="${BASH_REMATCH[2]}"
-  rpm_fedora="${BASH_REMATCH[3]}"
 else
   echo "Invalid KRISCC_RPM: $KRISCC_RPM" >&2
   exit 1
 fi
-if [[ "$rpm_version" != "$expected_version" || "$rpm_build" != "$expected_build" ]]; then
+if [[ "$rpm_version" != "$expected_version" ]]; then
   echo "KRISCC_RPM does not match KRISCC_TAG $KRISCC_TAG: $KRISCC_RPM" >&2
   exit 1
 fi
-expected_release="${expected_build}.fc${rpm_fedora}"
-expected_rpm="krisCC-${expected_version}-${expected_release}.x86_64.rpm"
+expected_release="1.fc45"
 if [[ ! "$KRISCC_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
   echo "Invalid KRISCC_SHA256" >&2
   exit 1

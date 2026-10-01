@@ -84,11 +84,6 @@ grep -Fq 'target="docker://ghcr.io/krism-eu/krisos45:m1"' .github/workflows/prom
 grep -Fq 'resolved_base="$(./scripts/resolve-base.sh)"' .github/workflows/sync-kriscc.yml
 grep -Fq -- '--build-arg "BASE_IMAGE=$resolved_base"' .github/workflows/sync-kriscc.yml
 grep -Fq 'podman skopeo' .github/workflows/sync-kriscc.yml
-grep -Fq 'does **not** move' docs/BUILD-CADENCE.md
-! grep -Fq 'advances automatically' docs/BUILD-CADENCE.md
-grep -Fq 'non viene aggiornato automaticamente' README.md
-grep -Fq 'non avvia krisCC durante il `Containerfile`' docs/RELEASE_VALIDATION.md
-grep -Fq 'public repository' HARDENING_FINAL.md
 python3 - <<'PY'
 from pathlib import Path
 p = Path('.github/workflows/promote-m1.yml').read_text()

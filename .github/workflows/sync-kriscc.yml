@@ -53,7 +53,6 @@ jobs:
           echo "Requested krisCC: $REQUESTED_TAG"
 
           current_version="${current_tag#v}"
-          current_version="${current_version%-*}"
           requested_version="${REQUESTED_TAG#v}"
           newest="$(printf '%s\n%s\n' "$current_version" "$requested_version" | sort -V | tail -n1)"
           if [[ "$newest" != "$requested_version" ]]; then
@@ -76,13 +75,13 @@ jobs:
           mapfile -t rpms < <(find "$tmp" -maxdepth 1 -type f -name 'krisCC-*.x86_64.rpm' -printf '%f\n')
           test "${#rpms[@]}" -eq 1
           rpm_file="${rpms[0]}"
-          [[ "$rpm_file" =~ ^krisCC-[0-9]+\.[0-9]+\.[0-9]+-1\.fc(44|45)\.x86_64\.rpm$ ]]
+          [[ "$rpm_file" =~ ^krisCC-[0-9]+\.[0-9]+\.[0-9]+-1\.fc45\.x86_64\.rpm$ ]]
 
           test "$(rpm -qp --qf '%{NAME}\n' "$tmp/$rpm_file")" = 'krisCC'
           test "$(rpm -qp --qf '%{ARCH}\n' "$tmp/$rpm_file")" = 'x86_64'
           rpm_version="$(rpm -qp --qf '%{VERSION}\n' "$tmp/$rpm_file")"
           rpm_release="$(rpm -qp --qf '%{RELEASE}\n' "$tmp/$rpm_file")"
-          [[ "$rpm_release" =~ ^1\.fc(44|45)$ ]]
+          [[ "$rpm_release" =~ ^1\.fc45$ ]]
           expected_tag="v${rpm_version}"
           test "$REQUESTED_TAG" = "$expected_tag"
 
