@@ -152,6 +152,17 @@ La policy già congelata per M1 è:
 Il wrapper implementa la protezione transazionale additive-only e rifiuta
 payload con effetti non supportati fuori da `/usr`; la policy resta
 intenzionalmente conservativa invece di promettere compatibilità RPM generica.
+I symlink dichiarati dagli RPM vengono validati sull'intero insieme della
+transazione; un symlink incoming non può essere annidato sotto un altro
+symlink incoming, perché la posizione fisica del figlio e la semantica dei
+target relativi dipenderebbero dall'ordine di estrazione. Un symlink già
+presente può essere ri-dichiarato soltanto se è root-owned e il target testuale
+è identico, dopo che la destinazione è comunque risultata confinata a `/usr` e
+fuori dai namespace protetti.
+Le directory preesistenti devono mantenere ownership e mode identici alla base;
+l'unica eccezione per una directory esistente che sia un symlink è l'alias
+UsrMerge Fedora `/usr/sbin -> /usr/bin`, verificato esplicitamente e senza
+allentare la policy per altri symlink.
 
 ## Milestone
 

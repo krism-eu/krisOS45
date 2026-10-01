@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """Policy tests: reject unsafe solved transactions before any RPM changes."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.machinery
 import importlib.util
 import io
@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -15,6 +16,23 @@ _loader = importlib.machinery.SourceFileLoader('rk', str(Path(__file__).resolve(
 _spec = importlib.util.spec_from_loader(_loader.name, _loader)
 rk = importlib.util.module_from_spec(_spec)
 _loader.exec_module(rk)
+
+_REAL_FSTAT = os.fstat
+
+
+def root_owned_fstat(fd):
+    """Return the real mode/type while simulating the production root:root owner.
+
+    Source-level unit tests must also run from an unprivileged developer shell;
+    ownership itself is covered separately by an explicit negative test.
+    """
+    info = _REAL_FSTAT(fd)
+    return types.SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_gid=0)
+
+
+def unprivileged_owned_fstat(fd):
+    info = _REAL_FSTAT(fd)
+    return types.SimpleNamespace(st_mode=info.st_mode, st_uid=1000, st_gid=1000)
 
 
 def guard_output(*args):
@@ -44,6 +62,39 @@ class FakeRepo:
 
 
 class Policy(unittest.TestCase):
+    def test_entrypoint_catches_non_runtime_libdnf_style_exception(self):
+        class NonLibdnfStyleException(Exception):
+            pass
+
+        stream = io.StringIO()
+        with mock.patch.object(rk, 'main', side_effect=NonLibdnfStyleException('repository offline')), \
+                redirect_stderr(stream):
+            self.assertEqual(rk.entrypoint(), 1)
+        self.assertEqual(stream.getvalue(), 'rk: NonLibdnfStyleException repository offline\n')
+
+    def test_entrypoint_flattens_multiline_libdnf_style_exception(self):
+        class NonLibdnfStyleException(Exception):
+            pass
+
+        stream = io.StringIO()
+        with mock.patch.object(rk, 'main', side_effect=NonLibdnfStyleException('line1\nline2')), \
+                redirect_stderr(stream):
+            self.assertEqual(rk.entrypoint(), 1)
+        self.assertEqual(stream.getvalue(), 'rk: NonLibdnfStyleException line1 line2\n')
+
+    def test_entrypoint_preserves_specific_runtime_error_format(self):
+        stream = io.StringIO()
+        with mock.patch.object(rk, 'main', side_effect=RuntimeError('blocked\nreason')), \
+                redirect_stderr(stream):
+            self.assertEqual(rk.entrypoint(), 1)
+        self.assertEqual(stream.getvalue(), 'rk: blocked reason\n')
+
+    def test_entrypoint_does_not_swallow_system_exit(self):
+        with mock.patch.object(rk, 'main', side_effect=SystemExit(2)), \
+                self.assertRaises(SystemExit) as raised:
+            rk.entrypoint()
+        self.assertEqual(raised.exception.code, 2)
+
     def test_repo_hardening_preserves_admin_enabled_state(self):
         for enabled in (True, False):
             with self.subTest(enabled=enabled):
@@ -52,42 +103,81 @@ class Policy(unittest.TestCase):
                 self.assertEqual(repo.config.enabled, enabled)
                 self.assertTrue(repo.config.pkg_gpgcheck)
 
-    def test_plan_lock_missing_falls_back_read_only(self):
-        with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.object(rk, 'STATE', Path(directory)):
-            self.assertIsNone(rk.acquire_plan_lock())
-
-    def test_plan_lock_uses_readonly_shared_nonblocking_lock(self):
+    def test_transaction_lock_requires_root_only_regular_file(self):
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch.object(rk, 'STATE', Path(directory)):
             path = Path(directory) / 'lock'
             path.write_text('')
-            real_open = os.open
-            calls = []
-            def tracked_open(file, flags, *args):
-                calls.append((Path(file), flags))
-                return real_open(file, flags, *args)
-            with mock.patch.object(rk.os, 'open', side_effect=tracked_open):
-                fd = rk.acquire_plan_lock()
-                try:
-                    self.assertEqual(calls[0], (path, os.O_RDONLY))
-                finally:
-                    os.close(fd)
+            # Keep the real test file openable by an unprivileged developer.
+            # Simulate the production root:root metadata, including each mode,
+            # through fstat so the test reaches rk's policy check instead of
+            # failing early in os.open() on 0400/0200.
+            path.chmod(0o600)
+            for mode in (0o644, 0o400, 0o200, 0o660):
+                with self.subTest(mode=oct(mode)), \
+                        mock.patch.object(
+                            rk.os,
+                            'fstat',
+                            return_value=types.SimpleNamespace(
+                                st_mode=0o100000 | mode, st_uid=0, st_gid=0
+                            ),
+                        ):
+                    with self.assertRaisesRegex(RuntimeError, 'root:root mode 0600'):
+                        rk.open_transaction_lock()
+            with mock.patch.object(
+                    rk.os,
+                    'fstat',
+                    return_value=types.SimpleNamespace(
+                        st_mode=0o100600, st_uid=0, st_gid=0
+                    ),
+            ):
+                fd = rk.open_transaction_lock()
+            try:
+                self.assertTrue(fd >= 0)
+            finally:
+                os.close(fd)
 
-    def test_plan_lock_busy_has_clear_error(self):
+    def test_transaction_lock_rejects_non_root_owner(self):
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch.object(rk, 'STATE', Path(directory)), \
-                mock.patch.object(rk.fcntl, 'flock', side_effect=BlockingIOError):
-            (Path(directory) / 'lock').write_text('')
-            with self.assertRaisesRegex(RuntimeError, 'Another rk transaction is in progress'):
-                rk.acquire_plan_lock()
+                mock.patch.object(rk.os, 'fstat', side_effect=unprivileged_owned_fstat):
+            path = Path(directory) / 'lock'
+            path.write_text('')
+            path.chmod(0o600)
+            with self.assertRaisesRegex(RuntimeError, 'root:root mode 0600'):
+                rk.open_transaction_lock()
+
+    def test_transaction_lock_missing_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(rk, 'STATE', Path(directory)):
+            with self.assertRaisesRegex(RuntimeError, 'transaction lock is not initialized'):
+                rk.open_transaction_lock()
+
+    def test_transaction_lock_does_not_follow_symlink(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(rk, 'STATE', Path(directory)):
+            root = Path(directory)
+            target = root / 'target'
+            target.write_text('')
+            target.chmod(0o600)
+            (root / 'lock').symlink_to(target)
+            with self.assertRaises(OSError):
+                rk.open_transaction_lock()
 
     def test_transaction_lock_busy_has_clear_error(self):
         with tempfile.TemporaryDirectory() as directory, \
-                (Path(directory) / 'lock').open('a') as lock, \
-                mock.patch.object(rk.fcntl, 'flock', side_effect=BlockingIOError):
-            with self.assertRaisesRegex(RuntimeError, 'Another rk transaction is in progress'):
-                rk.acquire_transaction_lock(lock)
+                mock.patch.object(rk, 'STATE', Path(directory)), \
+                mock.patch.object(rk.os, 'fstat', side_effect=root_owned_fstat):
+            path = Path(directory) / 'lock'
+            path.write_text('')
+            path.chmod(0o600)
+            fd = rk.open_transaction_lock()
+            try:
+                with mock.patch.object(rk.fcntl, 'flock', side_effect=BlockingIOError), \
+                        self.assertRaisesRegex(RuntimeError, 'Another rk transaction is in progress'):
+                    rk.acquire_transaction_lock(fd)
+            finally:
+                os.close(fd)
 
     def test_all_base_actions_rejected(self):
         for action in ('Install', 'Remove', 'Upgrade', 'Downgrade', 'Reinstall', 'Replaced'):
@@ -138,10 +228,17 @@ class Policy(unittest.TestCase):
             if command[2] == '--qf':
                 # Include a final newline exactly like rpm. Empty FILELINKTOS and
                 # FILECAPS therefore leave two meaningful trailing TAB fields.
-                return ''.join(
-                    f'{name}\t{mode}\t{target}\t{caps}\n'
-                    for name, mode, target, caps in entries
-                )
+                rows = []
+                for entry in entries:
+                    if len(entry) == 4:
+                        name, mode, target, caps = entry
+                        owner = group = 'root'
+                    elif len(entry) == 6:
+                        name, mode, owner, group, target, caps = entry
+                    else:
+                        raise AssertionError(f'unexpected manifest fixture: {entry!r}')
+                    rows.append(f'{name}\t{mode}\t{owner}\t{group}\t{target}\t{caps}\n')
+                return ''.join(rows)
             raise AssertionError(f'unexpected rpm query: {command!r}')
         return fake_check_output
 
@@ -186,6 +283,12 @@ class Policy(unittest.TestCase):
             '/usr/lib/sysctl.d/99-overlay.conf',
             '/usr/lib/NetworkManager/conf.d/overlay.conf',
             '/usr/lib/dracut/modules.d/99overlay/module-setup.sh',
+            '/usr/share/dbus-1/system.d/org.example.conf',
+            '/usr/share/dbus-1/system-services/org.example.service',
+            '/usr/share/factory/var/lib/krisos/packages.list',
+            '/usr/lib/environment.d/90-example.conf',
+            '/usr/lib/binfmt.d/example.conf',
+            '/usr/etc/example.conf',
         ):
             with self.subTest(filename=filename), \
                     mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output([(filename, '100644', '', '')])), \
@@ -208,6 +311,31 @@ class Policy(unittest.TestCase):
         ]
         with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
                 self.assertRaisesRegex(RuntimeError, 'protected or persistent state'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_cross_package_symlink_graph_cannot_reach_protected_namespace(self):
+        package_a = [
+            ('/usr/share/bridge', Path('/usr/share/bridge'), False, True, 'target', 0o120777, 'root', 'root', '/tmp/a.rpm'),
+        ]
+        package_b = [
+            ('/usr/share/target', Path('/usr/share/target'), False, True, '/usr/lib/security', 0o120777, 'root', 'root', '/tmp/b.rpm'),
+            ('/usr/share/bridge/payload.so', Path('/usr/share/bridge/payload.so'), False, False, '', 0o100644, 'root', 'root', '/tmp/b.rpm'),
+        ]
+        with mock.patch.object(
+                rk, '_read_payload_manifest',
+                side_effect=[(package_a, {'/usr/share/bridge': 'target'}),
+                             (package_b, {'/usr/share/target': '/usr/lib/security'})]), \
+                self.assertRaisesRegex(RuntimeError, 'protected or persistent state'):
+            rk.validate_payloads(['/tmp/a.rpm', '/tmp/b.rpm'])
+
+    def test_nested_incoming_symlinks_are_rejected(self):
+        entries = [
+            ('/usr/share/app', '120777', '/usr/bin', ''),
+            ('/usr/share/app/hooks', '120777', '../lib/security', ''),
+            ('/usr/share/app/hooks/evil.so', '100644', '', ''),
+        ]
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                self.assertRaisesRegex(RuntimeError, 'Nested incoming symlinks are not supported'):
             rk.validate_payload('/tmp/overlay.rpm')
 
     def test_safe_internal_symlink_is_allowed(self):
@@ -241,6 +369,73 @@ class Policy(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, 'symlink cycle'):
             rk.validate_payload('/tmp/overlay.rpm')
 
+    def test_non_root_owned_payload_is_rejected(self):
+        entries = [('/usr/share/example/file.txt', '100644', 'daemon', 'root', '', '')]
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                self.assertRaisesRegex(RuntimeError, 'Non-root RPM ownership'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_group_or_world_writable_payload_is_rejected(self):
+        for mode in ('100664', '100666', '040775', '040777'):
+            with self.subTest(mode=mode), \
+                    mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output([('/usr/share/example/path', mode, '', '')])), \
+                    self.assertRaisesRegex(RuntimeError, 'Group/world-writable'):
+                rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_existing_directory_requires_exact_root_metadata(self):
+        entries = [('/usr/share', '040755', '', '')]
+        fake_info = type('S', (), {'st_uid': 0, 'st_gid': 0, 'st_mode': 0o40700})()
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_dir', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=False), \
+                mock.patch.object(Path, 'stat', return_value=fake_info), \
+                self.assertRaisesRegex(RuntimeError, 'metadata does not match'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_usrmerge_sbin_directory_symlink_is_allowed_with_exact_metadata(self):
+        entries = [('/usr/sbin', '040755', '', '')]
+        fake_info = type('S', (), {'st_uid': 0, 'st_gid': 0, 'st_mode': 0o40755})()
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_dir', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=True), \
+                mock.patch.object(Path, 'stat', return_value=fake_info), \
+                mock.patch.object(rk, '_is_allowed_usrmerge_directory_symlink', return_value=True):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_usrmerge_sbin_alias_still_requires_exact_target_metadata(self):
+        entries = [('/usr/sbin', '040755', '', '')]
+        fake_info = type('S', (), {'st_uid': 0, 'st_gid': 0, 'st_mode': 0o40700})()
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_dir', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=True), \
+                mock.patch.object(Path, 'stat', return_value=fake_info), \
+                mock.patch.object(rk, '_is_allowed_usrmerge_directory_symlink', return_value=True), \
+                self.assertRaisesRegex(RuntimeError, 'metadata does not match'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_non_allowlisted_existing_directory_symlink_is_rejected(self):
+        entries = [('/usr/share/example', '040755', '', '')]
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_dir', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=True), \
+                self.assertRaisesRegex(RuntimeError, 'would overwrite an existing path'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_usrmerge_allowlist_requires_exact_link_destination(self):
+        file = mock.Mock()
+        file.is_symlink.return_value = True
+        file.resolve.return_value = Path('/usr/bin')
+        with mock.patch.object(rk.os, 'readlink', return_value='bin'):
+            self.assertTrue(rk._is_allowed_usrmerge_directory_symlink('/usr/sbin', file))
+        with mock.patch.object(rk.os, 'readlink', return_value='../bin'):
+            self.assertFalse(rk._is_allowed_usrmerge_directory_symlink('/usr/sbin', file))
+        with mock.patch.object(rk.os, 'readlink', return_value='bin'):
+            self.assertFalse(rk._is_allowed_usrmerge_directory_symlink('/usr/libexec', file))
+
     def test_special_setid_and_capability_payloads_are_rejected(self):
         cases = (
             ('/usr/share/example/device', '020666', '', '', 'Special files'),
@@ -254,6 +449,49 @@ class Policy(unittest.TestCase):
                     mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output([(filename, mode, target, caps)])), \
                     self.assertRaisesRegex(RuntimeError, error):
                 rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_identical_root_owned_existing_symlink_is_allowed(self):
+        entries = [('/usr/share/example/current', '120777', 'data', '')]
+        fake_lstat = types.SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o120777)
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=True), \
+                mock.patch.object(Path, 'lstat', return_value=fake_lstat), \
+                mock.patch.object(rk.os, 'readlink', return_value='data'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_identical_existing_symlink_cannot_reach_protected_namespace(self):
+        entries = [('/usr/share/example/current', '120777', '/usr/lib/security', '')]
+        fake_lstat = types.SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o120777)
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=True), \
+                mock.patch.object(Path, 'lstat', return_value=fake_lstat), \
+                mock.patch.object(rk.os, 'readlink', return_value='/usr/lib/security'), \
+                self.assertRaisesRegex(RuntimeError, 'protected or persistent state'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_existing_symlink_with_different_target_is_rejected(self):
+        entries = [('/usr/share/example/current', '120777', 'data', '')]
+        fake_lstat = types.SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o120777)
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=True), \
+                mock.patch.object(Path, 'lstat', return_value=fake_lstat), \
+                mock.patch.object(rk.os, 'readlink', return_value='other'), \
+                self.assertRaisesRegex(RuntimeError, 'overwrite an existing path'):
+            rk.validate_payload('/tmp/overlay.rpm')
+
+    def test_identical_existing_symlink_must_be_root_owned(self):
+        entries = [('/usr/share/example/current', '120777', 'data', '')]
+        fake_lstat = types.SimpleNamespace(st_uid=1000, st_gid=1000, st_mode=0o120777)
+        with mock.patch.object(rk.subprocess, 'check_output', side_effect=self.rpm_manifest_output(entries)), \
+                mock.patch.object(rk.os.path, 'lexists', return_value=True), \
+                mock.patch.object(Path, 'is_symlink', return_value=True), \
+                mock.patch.object(Path, 'lstat', return_value=fake_lstat), \
+                mock.patch.object(rk.os, 'readlink', return_value='data'), \
+                self.assertRaisesRegex(RuntimeError, 'overwrite an existing path'):
+            rk.validate_payload('/tmp/overlay.rpm')
 
     def test_intent_atomic_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -323,14 +561,32 @@ class Policy(unittest.TestCase):
             self.assertEqual(payload['requests'], ['nano', 'tree'])
             self.assertEqual(rk.load_intent(), {'nano', 'tree'})
 
-    def test_status_rejects_corrupted_package_intent(self):
+    def test_status_reports_corrupted_package_intent_as_json_safe_degraded_state(self):
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch.object(rk, 'STATE', Path(directory)), \
                 mock.patch.object(rk, 'output', side_effect=guard_output):
             state = Path(directory)
             (state / 'packages.list').write_text('tree\nbad name\n')
-            with self.assertRaisesRegex(RuntimeError, 'Use an exact package name'):
-                rk.status_payload()
+            payload = rk.status_payload()
+            self.assertEqual(payload['overlay'], 'degraded')
+            self.assertEqual(payload['requests'], [])
+            self.assertIn('Use an exact package name', payload['state_error'])
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                rk.show_status(json_output=True)
+            decoded = json.loads(stream.getvalue())
+            self.assertEqual(decoded['schema'], 1)
+            self.assertTrue(decoded['state_error'])
+
+    def test_status_reports_non_utf8_package_intent_without_crashing(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(rk, 'STATE', Path(directory)), \
+                mock.patch.object(rk, 'output', side_effect=guard_output):
+            state = Path(directory)
+            (state / 'packages.list').write_bytes(b'tree\n\xff\n')
+            payload = rk.status_payload()
+            self.assertEqual(payload['overlay'], 'degraded')
+            self.assertTrue(payload['state_error'])
 
 
 if __name__ == '__main__':

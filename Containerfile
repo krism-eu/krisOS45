@@ -103,6 +103,13 @@ RUN set -eux; \
     LC_ALL=C sort -u -o \
       /tmp/fedora-base-nevra.before /tmp/fedora-base-nevra.before; \
     dnf_plugins_vra="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' libdnf5-cli)"; \
+    dnf_plugins_nevra="dnf5-plugins-${dnf_plugins_vra}"; \
+    if ! dnf5 repoquery --available \
+      --queryformat '%{name}-%{version}-%{release}.%{arch}' \
+      "$dnf_plugins_nevra" | grep -Fxq "$dnf_plugins_nevra"; then \
+      echo "No dnf5-plugins build matches installed libdnf5-cli: ${dnf_plugins_vra}" >&2; \
+      exit 1; \
+    fi; \
     sed -i "s/^dnf5-plugins$/dnf5-plugins-${dnf_plugins_vra}/" /tmp/krisos-delta-names.txt; \
     base_excludes="$(paste -sd, /tmp/fedora-base-names.txt)"; \
     xargs -r dnf5 -y \
@@ -372,7 +379,7 @@ RUN set -eux; \
     systemctl disable mdmonitor.service raid-check.timer; \
     systemctl disable flatpak-add-fedora-repos.service; \
     systemctl disable cockpit.socket; \
-    systemctl mask bootc-fetch-apply-updates.timer dnf-makecache.timer dnf5-makecache.timer || true; \
+    for unit in bootc-fetch-apply-updates.timer dnf-makecache.timer dnf5-makecache.timer; do systemctl mask "$unit"; done; \
     systemctl disable ufw.service || true; \
     systemctl set-default graphical.target
 
@@ -394,6 +401,12 @@ RUN set -eux; \
     assert_disabled() { \
       if systemctl is-enabled "$1" >/dev/null 2>&1; then \
         echo "unit must not be enabled: $1" >&2; \
+        exit 1; \
+      fi; \
+    }; \
+    assert_masked() { \
+      if ! systemctl is-enabled "$1" 2>/dev/null | grep -qx masked; then \
+        echo "unit must be masked: $1" >&2; \
         exit 1; \
       fi; \
     }; \
@@ -457,6 +470,8 @@ RUN set -eux; \
     test -f /usr/lib/tmpfiles.d/krisos.conf; \
     grep -Fxq 'd /var/lib/krisos 0755 root root -' \
       /usr/lib/tmpfiles.d/krisos.conf; \
+    grep -Fxq 'f /var/lib/krisos/lock 0600 root root -' \
+      /usr/lib/tmpfiles.d/krisos.conf; \
     grep -Fxq 'C /var/lib/krisos/packages.list 0644 root root - /usr/share/factory/var/lib/krisos/packages.list' \
       /usr/lib/tmpfiles.d/krisos.conf; \
     grep -Fxq 'C /var/lib/NetworkManager/NetworkManager.state 0600 root root - /usr/share/factory/var/lib/NetworkManager/NetworkManager.state' \
@@ -500,9 +515,9 @@ RUN set -eux; \
     assert_disabled raid-check.timer; \
     assert_disabled flatpak-add-fedora-repos.service; \
     assert_disabled cockpit.socket; \
-    assert_disabled bootc-fetch-apply-updates.timer; \
-    assert_disabled dnf-makecache.timer; \
-    assert_disabled dnf5-makecache.timer; \
+    assert_masked bootc-fetch-apply-updates.timer; \
+    assert_masked dnf-makecache.timer; \
+    assert_masked dnf5-makecache.timer; \
     assert_disabled ufw.service; \
     test -z "$(ldd /usr/lib64/qt6/plugins/platforms/libqxcb.so | awk '/not found/{print}')"; \
     test -z "$(ldd /usr/libexec/plasma-login-greeter | awk '/not found/{print}')"; \

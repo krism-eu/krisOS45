@@ -1,0 +1,183 @@
+name: Publish M1 Candidate
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Optional exact/tagged Fedora bootc base; resolved to digest by the shared gate"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-m1-candidate
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, validate, publish immutable digest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman skopeo rpm
+          podman version
+          skopeo --version
+
+      - name: Build exact source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/source
+          zip="KrisOS-${GITHUB_SHA}-source.zip"
+          txt="KrisOS-${GITHUB_SHA}-source.txt"
+          python3 tools/source_snapshot.py \
+            --repository krism-eu/krisOS45 \
+            --ref "$GITHUB_SHA" \
+            --display-ref "${GITHUB_REF_NAME}" \
+            --version '0.1.0-m1' \
+            --output "artifacts/source/$txt"
+          git archive --format=zip --prefix="KrisOS-${GITHUB_SHA}/" \
+            --output="artifacts/source/$zip" "$GITHUB_SHA"
+          (cd artifacts/source && sha256sum "$zip" "$txt" > SHA256SUMS && sha256sum -c SHA256SUMS)
+
+      - name: Run the shared local/CI hardening gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KRISOS_BASE_IMAGE: ${{ inputs.base_image }}
+          KRISOS_LOCAL_TAG: localhost/krisos45:candidate
+          KRISOS_SOURCE_REVISION: ${{ github.sha }}
+        run: ./tests/local-hardening-check.sh
+
+      - name: Capture exact package provenance and drift
+        shell: bash
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          podman run --rm --entrypoint /bin/cat localhost/krisos45:candidate \
+            /usr/share/krisos/owned-nevra.txt > owned-nevra.txt
+          podman run --rm --entrypoint /bin/cat localhost/krisos45:candidate \
+            /usr/share/krisos/firmware-provenance/rtl8168h-2-source-nevra.txt > firmware-source-nevra.txt
+          test -s owned-nevra.txt
+          grep -Eq '^linux-firmware[[:space:]]' firmware-source-nevra.txt
+          LC_ALL=C sort -c owned-nevra.txt
+
+          : > package-drift.txt
+          authfile="$(mktemp "${RUNNER_TEMP:-/tmp}/krisos-ghcr-auth.XXXXXX")"
+          chmod 0600 "$authfile"
+          trap 'rm -f "$authfile"' EXIT
+          printf '{"auths":{}}\n' > "$authfile"
+          if [[ -n "${GHCR_TOKEN:-}" ]] && printf '%s' "$GHCR_TOKEN" | \
+                skopeo login --authfile "$authfile" ghcr.io --username "$GHCR_USER" --password-stdin \
+                >/dev/null 2>&1; then
+            echo 'Package drift baseline: authenticated GHCR access available.'
+          else
+            printf '{"auths":{}}\n' > "$authfile"
+            echo 'Package drift baseline: authenticated GHCR access unavailable; trying anonymous access.'
+          fi
+          previous='ghcr.io/krism-eu/krisos45:m1'
+          if previous_digest="$(skopeo inspect --authfile "$authfile" --format '{{.Digest}}' "docker://$previous" 2>/dev/null)"; then
+            printf '%s\n' "$previous_digest" > previous-m1.digest
+            if podman pull --authfile "$authfile" "$previous" >/dev/null 2>&1; then
+              podman run --rm --entrypoint /bin/cat "$previous" \
+                /usr/share/krisos/owned-nevra.txt > previous-owned-nevra.txt
+              test -s previous-owned-nevra.txt
+              diff -u previous-owned-nevra.txt owned-nevra.txt > package-drift.txt || true
+            else
+              printf 'Previous m1 exists but could not be pulled for drift comparison.\n' > package-drift.txt
+            fi
+          else
+            printf 'No previous m1 baseline was available for package drift comparison.\n' > package-drift.txt
+          fi
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.0.6'
+
+      - name: Login to GHCR
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$HOME/.docker"
+          printf '%s' "$GHCR_TOKEN" | podman login --authfile "$HOME/.docker/config.json" \
+            ghcr.io --username "$GHCR_USER" --password-stdin
+
+      - name: Publish immutable candidate only
+        shell: bash
+        run: |
+          set -euo pipefail
+          immutable="ghcr.io/krism-eu/krisos45:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if skopeo inspect --authfile "$HOME/.docker/config.json" "docker://$immutable" >/dev/null 2>&1; then
+            echo "Immutable build tag already exists; refusing overwrite: $immutable" >&2
+            exit 1
+          fi
+          podman tag localhost/krisos45:candidate "$immutable"
+          podman push --authfile "$HOME/.docker/config.json" --digestfile publish.digest "$immutable" 2>&1 | tee publish-immutable.log
+          grep -Eq '^sha256:[0-9a-f]{64}$' publish.digest
+
+      - name: Sign and verify immutable digest
+        run: |
+          set -euo pipefail
+          digest="$(cat publish.digest)"
+          image="ghcr.io/krism-eu/krisos45@${digest}"
+          cosign sign --yes "$image"
+          cosign verify \
+            --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/publish-candidate.yml@refs/heads/main' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "$image" 2>&1 | tee cosign-verify.log
+
+      - name: Verify anonymous immutable pull
+        run: |
+          set -euo pipefail
+          immutable="ghcr.io/krism-eu/krisos45:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          expected="$(cat publish.digest)"
+          authfile="$(mktemp)"
+          trap 'rm -f "$authfile"' EXIT
+          printf '{"auths":{}}\n' > "$authfile"
+          skopeo inspect --raw --authfile "$authfile" "docker://$immutable" > anonymous-immutable-manifest.json
+          actual="sha256:$(sha256sum anonymous-immutable-manifest.json | awk '{print $1}')"
+          test "$actual" = "$expected"
+          printf 'Candidate digest: %s\n' "$expected" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Promotion must be run separately through promote-m1.yml.\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve candidate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-m1-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            artifacts/source/
+            fedora45-base.txt
+            build.log
+            rk-integration.log
+            owned-nevra.txt
+            firmware-source-nevra.txt
+            previous-owned-nevra.txt
+            previous-m1.digest
+            package-drift.txt
+            publish.digest
+            publish-immutable.log
+            cosign-verify.log
+            anonymous-immutable-manifest.json
+          if-no-files-found: ignore

@@ -109,6 +109,16 @@ successiva a un cambio deployment. Questo compromesso deve essere visibile nella
 UI: gli RPM overlay non hanno una cadenza di security update indipendente dalla
 release immutabile KrisOS.
 
+## Error boundary
+
+Il boundary CLI converte in exit status 1 sia gli errori di policy/OS sia le
+eccezioni Python libdnf5 moderne (incluse le classi SWIG che non ereditano più
+da `RuntimeError`), evitando traceback grezzi nei log di `krisos-sync.service`.
+I messaggi di eccezione multilinea vengono normalizzati su una singola riga,
+così ogni errore resta un record `rk:` coerente e facilmente filtrabile in
+`journalctl`. `SystemExit` e `KeyboardInterrupt` non vengono intercettati dal
+catch di `Exception`.
+
 ## Status API
 
 `rk status --json` emette `schema: 1` con stato overlay, mount, errore,

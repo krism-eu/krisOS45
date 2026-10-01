@@ -21,6 +21,14 @@ FINDMNT = '/usr/bin/findmnt'
 GETENFORCE = '/usr/sbin/getenforce'
 LS = '/usr/bin/ls'
 
+# Fedora's UsrMerge compatibility links may legitimately be owned as %dir by
+# legacy or third-party RPMs. Keep this allowlist deliberately tiny: only
+# aliases that are part of the trusted base filesystem may bypass the generic
+# 'existing symlink' rejection for directory entries.
+USR_MERGE_DIRECTORY_SYMLINKS = {
+    '/usr/sbin': '/usr/bin',
+}
+
 # Incoming overlay RPMs must stay application-like.  These namespaces either
 # own the immutable base/trust model or can create persistent/boot-time effects
 # outside the disposable /usr overlay (sysusers, tmpfiles, units, udev, PAM,
@@ -53,6 +61,12 @@ PROTECTED_PREFIXES = (
     '/usr/lib/NetworkManager',
     '/usr/lib/dracut',
     '/usr/lib/kernel',
+    '/usr/share/dbus-1/system.d',
+    '/usr/share/dbus-1/system-services',
+    '/usr/share/factory',
+    '/usr/lib/environment.d',
+    '/usr/lib/binfmt.d',
+    '/usr/etc',
 )
 
 
@@ -161,24 +175,31 @@ def harden_repo(repo):
     config.pkg_gpgcheck = True
 
 
-def acquire_plan_lock():
-    """Take the shared rk state lock when provisioned; plan stays usable pre-tmpfiles."""
+def open_transaction_lock():
+    """Open the root-only mutation lock without following attacker-controlled links."""
+    flags = os.O_RDWR | os.O_CLOEXEC
+    if hasattr(os, 'O_NOFOLLOW'):
+        flags |= os.O_NOFOLLOW
     try:
-        fd = os.open(STATE / 'lock', os.O_RDONLY)
-    except FileNotFoundError:
-        return None
+        fd = os.open(STATE / 'lock', flags)
+    except FileNotFoundError as error:
+        raise RuntimeError('KrisOS transaction lock is not initialized; run sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/krisos.conf') from error
     try:
-        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BlockingIOError as error:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError('KrisOS transaction lock is not a regular file')
+        if info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
+            raise RuntimeError('KrisOS transaction lock must be root:root mode 0600')
+        return fd
+    except Exception:
         os.close(fd)
-        raise RuntimeError('Another rk transaction is in progress') from error
-    return fd
+        raise
 
 
-def acquire_transaction_lock(lock):
-    """Take the exclusive rk state lock and normalize the busy error."""
+def acquire_transaction_lock(fd):
+    """Take the exclusive root-only mutation lock and normalize the busy error."""
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as error:
         raise RuntimeError('Another rk transaction is in progress') from error
 
@@ -193,6 +214,50 @@ def _link_destination(link_path, target):
     if target.startswith('/'):
         return posixpath.normpath(target)
     return posixpath.normpath(posixpath.join(posixpath.dirname(link_path), target))
+
+
+def _is_allowed_usrmerge_directory_symlink(filename, file):
+    """Return True only for an exact trusted UsrMerge directory alias."""
+    expected = USR_MERGE_DIRECTORY_SYMLINKS.get(filename)
+    if expected is None or not file.is_symlink():
+        return False
+    try:
+        link_target = _link_destination(filename, os.readlink(file))
+        resolved = str(file.resolve(strict=False))
+    except (OSError, RuntimeError):
+        return False
+    return link_target == expected and resolved == expected
+
+
+def _is_identical_root_symlink(file, target):
+    """Allow a pre-existing symlink only when it is an exact root-owned match."""
+    if not file.is_symlink():
+        return False
+    try:
+        info = file.lstat()
+        return info.st_uid == 0 and info.st_gid == 0 and os.readlink(file) == target
+    except OSError:
+        return False
+
+
+def _reject_nested_manifest_symlinks(links):
+    """Reject symlink entries whose pathname is below another incoming symlink.
+
+    Such payloads are order-dependent: the child symlink is physically created
+    below the ancestor's resolved target, so its relative target is no longer
+    interpreted from the pathname recorded in the RPM manifest.  Refusing this
+    shape keeps validation identical to the filesystem semantics instead of
+    trying to emulate an RPM extraction order.
+    """
+    for path in links:
+        parent = posixpath.dirname(path)
+        while parent.startswith('/usr/'):
+            if parent in links:
+                raise RuntimeError(
+                    'Nested incoming symlinks are not supported: '
+                    + path + ' is below ' + parent
+                )
+            parent = posixpath.dirname(parent)
 
 
 def _resolve_manifest_links(path, links):
@@ -217,19 +282,17 @@ def _resolve_manifest_links(path, links):
     raise RuntimeError('RPM payload contains a symlink cycle affecting: ' + path)
 
 
-def validate_payload(path):
+def _read_payload_manifest(path):
     for flag in ('--scripts', '--triggers', '--filetriggers'):
         if output(RPM, '-qp', flag, path):
             raise RuntimeError('Package scriptlets/triggers are not supported in this release: ' + path)
 
-    # Do not pass the manifest through output(): its global .strip() would
-    # remove trailing TABs from the final RPM entry when FILELINKTOS/FILECAPS
-    # are empty, corrupting the four-column record. Keep the raw query output
-    # and let splitlines() remove only line boundaries.
+    # Preserve empty trailing FILELINKTOS/FILECAPS fields; output().strip()
+    # would corrupt the four-column record for the final manifest entry.
     listing = subprocess.check_output(
         (
             RPM, '-qp', '--qf',
-            '[%{FILENAMES}\t%{FILEMODES:octal}\t%{FILELINKTOS}\t%{FILECAPS}\n]', path,
+            '[%{FILENAMES}\t%{FILEMODES:octal}\t%{FILEUSERNAME}\t%{FILEGROUPNAME}\t%{FILELINKTOS}\t%{FILECAPS}\n]', path,
         ),
         text=True,
     )
@@ -237,9 +300,9 @@ def validate_payload(path):
     links = {}
     for line in listing.splitlines():
         fields = line.split('\t')
-        if len(fields) != 4:
+        if len(fields) != 6:
             raise RuntimeError('Malformed RPM file manifest: ' + line)
-        filename, mode_text, link_target, file_caps = fields
+        filename, mode_text, owner, group, link_target, file_caps = fields
         file = Path(filename)
         try:
             mode = int(mode_text, 8)
@@ -255,15 +318,43 @@ def validate_payload(path):
             raise RuntimeError('Special files are not supported in additive RPM payloads: ' + filename)
         if mode & (stat.S_ISUID | stat.S_ISGID):
             raise RuntimeError('setuid/setgid files are not supported in additive RPM payloads: ' + filename)
+        if owner != 'root' or group != 'root':
+            raise RuntimeError('Non-root RPM ownership is not supported in additive payloads: ' + filename)
+        if not symlink and mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise RuntimeError('Group/world-writable paths are not supported in additive RPM payloads: ' + filename)
         if file_caps not in ('', '(none)'):
             raise RuntimeError('File capabilities are not supported in additive RPM payloads: ' + filename)
         if symlink:
             links[filename] = link_target
         elif link_target:
             raise RuntimeError('Non-symlink RPM entry unexpectedly has a link target: ' + filename)
-        entries.append((filename, file, directory, symlink, link_target))
+        entries.append((filename, file, directory, symlink, link_target, mode, owner, group, path))
+    return entries, links
 
-    for filename, file, directory, symlink, link_target in entries:
+
+def validate_payloads(paths):
+    """Validate all incoming RPMs as one future filesystem graph."""
+    entries = []
+    links = {}
+    seen = {}
+    for path in paths:
+        package_entries, package_links = _read_payload_manifest(path)
+        for filename, _file, directory, symlink, link_target, mode, owner, group, _package_path in package_entries:
+            signature = (directory, symlink, link_target, stat.S_IMODE(mode), owner, group)
+            previous = seen.get(filename)
+            if previous is not None and previous != signature:
+                raise RuntimeError('Incoming RPMs define incompatible entries for the same path: ' + filename)
+            seen[filename] = signature
+            if symlink:
+                previous_target = links.get(filename)
+                if previous_target is not None and previous_target != link_target:
+                    raise RuntimeError('Incoming RPMs define conflicting symlinks: ' + filename)
+                links[filename] = link_target
+        entries.extend(package_entries)
+
+    _reject_nested_manifest_symlinks(links)
+
+    for filename, file, directory, symlink, link_target, mode, owner, group, _package_path in entries:
         if symlink:
             destination = _resolve_manifest_links(_link_destination(filename, link_target), links)
             destination = str(Path(destination).resolve(strict=False))
@@ -273,13 +364,35 @@ def validate_payload(path):
                 raise RuntimeError('Package symlink reaches protected or persistent state: ' + filename)
 
         resolved = _resolve_manifest_links(filename, links)
-        # Account for immutable/live symlinks already present in the base too.
         resolved = str(Path(resolved).resolve(strict=False))
         if not resolved.startswith('/usr/') or _protected(resolved):
             raise RuntimeError('Package payload reaches protected or persistent state: ' + filename)
 
-        if os.path.lexists(file) and not (directory and file.is_dir() and not file.is_symlink()):
-            raise RuntimeError('Additive package would overwrite an existing path: ' + filename)
+        if os.path.lexists(file):
+            existing_symlink = file.is_symlink()
+            if symlink and existing_symlink and _is_identical_root_symlink(file, link_target):
+                continue
+            allowed_usrmerge = (
+                directory
+                and existing_symlink
+                and _is_allowed_usrmerge_directory_symlink(filename, file)
+            )
+            if not (directory and file.is_dir() and (not existing_symlink or allowed_usrmerge)):
+                raise RuntimeError('Additive package would overwrite an existing path: ' + filename)
+            info = file.stat()
+            payload_mode = stat.S_IMODE(mode)
+            live_mode = stat.S_IMODE(info.st_mode)
+            if info.st_uid != 0 or info.st_gid != 0:
+                raise RuntimeError('Existing /usr directory has unsafe ownership: ' + filename)
+            if owner != 'root' or group != 'root' or live_mode != payload_mode:
+                raise RuntimeError('RPM directory metadata does not match existing /usr directory: ' + filename)
+            if live_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                raise RuntimeError('Existing /usr directory has unsafe mode: ' + filename)
+
+
+def validate_payload(path):
+    """Compatibility wrapper for single-RPM callers and unit tests."""
+    validate_payloads([path])
 
 
 def print_plan(requested, incoming):
@@ -406,13 +519,14 @@ def transact(command, requested, dry_run=False):
         if install - installed_names - {p.get_name() for p in incoming}:
             raise RuntimeError('Request must resolve to that exact package name, not a capability or NEVRA')
         if dry_run:
+            if guard() != before or load_intent() != intent:
+                raise RuntimeError('KrisOS state changed during plan; retry')
             print_plan(requested, incoming)
             return
         tx.download()
         if not tx.check_gpg_signatures():
             raise RuntimeError('RPM signature verification failed; no transaction applied')
-        for pkg in incoming:
-            validate_payload(pkg.get_package_path())
+        validate_payloads([pkg.get_package_path() for pkg in incoming])
         if int(tx.test()) != 0:
             raise RuntimeError('RPM transaction test failed; no transaction applied')
         if guard() != before:
@@ -446,6 +560,7 @@ def status_payload():
         'overlay': 'degraded',
         'mount': '',
         'overlay_error': '',
+        'state_error': '',
         'pending_recovery': (STATE / 'pending').exists(),
         'needs_sync': (STATE / 'needs-sync').exists(),
         'requests': [],
@@ -458,7 +573,11 @@ def status_payload():
 
     package_file = STATE / 'packages.list'
     if package_file.exists():
-        payload['requests'] = sorted(persisted_names(package_file.read_text()))
+        try:
+            payload['requests'] = sorted(persisted_names(package_file.read_text()))
+        except (RuntimeError, OSError, UnicodeError) as error:
+            payload['state_error'] = str(error)
+            payload['overlay'] = 'degraded'
     return payload
 
 
@@ -473,6 +592,8 @@ def show_status(json_output=False):
         print('Mount:', payload['mount'])
     if payload['overlay_error']:
         print('Overlay error:', payload['overlay_error'])
+    if payload['state_error']:
+        print('State error:', payload['state_error'])
     print('Pending recovery:', payload['pending_recovery'])
     print('Needs sync:', payload['needs_sync'])
     for package in payload['requests']:
@@ -497,30 +618,51 @@ def main():
     if args.command == 'plan':
         guard()
         load_intent()
-        fd = acquire_plan_lock()
-        try:
-            transact('add', requested, dry_run=True)
-        finally:
-            if fd is not None:
-                os.close(fd)
+        # Unprivileged readers must never be able to block the root-only
+        # mutation lock. The dry-run path rechecks mount + intent before output.
+        transact('add', requested, dry_run=True)
         return
     if os.geteuid() != 0:
         raise RuntimeError('Run with sudo')
-    with (STATE / 'lock').open('a') as lock:
+    lock = open_transaction_lock()
+    try:
         acquire_transaction_lock(lock)
-        # Read and validate mutable state only after taking the exclusive lock.
-        # transact() repeats these checks immediately before solver work.
         guard()
         load_intent()
         if args.command == 'forget':
             forget_requests(requested)
         else:
             transact(args.command, requested)
+    finally:
+        os.close(lock)
 
 
-if __name__ == '__main__':
+
+def _single_line_error(error):
+    """Flatten exception text so each CLI failure remains one journal record."""
+    return ' '.join(str(error).splitlines()).strip()
+
+
+def entrypoint():
     try:
         main()
     except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
-        print('rk:', error, file=sys.stderr)
-        sys.exit(1)
+        message = _single_line_error(error) or type(error).__name__
+        print('rk:', message, file=sys.stderr)
+        return 1
+    except Exception as error:
+        # libdnf5's modern SWIG bindings expose independent Exception branches
+        # (for example NonLibdnf5Exception) rather than RuntimeError only. Keep
+        # the CLI/service boundary traceback-free without swallowing SystemExit
+        # or KeyboardInterrupt, which inherit directly from BaseException.
+        message = _single_line_error(error)
+        if message:
+            print('rk:', type(error).__name__, message, file=sys.stderr)
+        else:
+            print('rk:', type(error).__name__, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(entrypoint())

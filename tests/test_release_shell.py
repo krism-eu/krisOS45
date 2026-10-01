@@ -101,19 +101,18 @@ remote_dir=/tmp/qa
                 self.assertNotIn(top, ignored, f'{line!r} uses an ignored build-context source')
 
     def test_package_drift_falls_back_to_anonymous_after_login_failure(self):
-        block = self.workflow_run_block('.github/workflows/build-m1.yml', 'Capture exact package provenance and drift')
+        block = self.workflow_run_block('.github/workflows/publish-candidate.yml', 'Capture exact package provenance and drift')
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             bindir = directory / 'bin'
             bindir.mkdir()
-            sudo = bindir / 'sudo'
-            sudo.write_text('''#!/bin/sh
-if [ "$1" = podman ]; then shift; fi
+            podman = bindir / 'podman'
+            podman.write_text('''#!/bin/sh
 case "$1" in
   run)
     case "$*" in
-      *localhost/krisos45:m1*firmware-provenance*) printf 'linux-firmware\t0:20260901-1.fc45.noarch\n' ;;
-      *localhost/krisos45:m1*owned-nevra*) printf 'base\t0:2.0-1.fc45.x86_64\n' ;;
+      *localhost/krisos45:candidate*firmware-provenance*) printf 'linux-firmware\t0:20260901-1.fc45.noarch\n' ;;
+      *localhost/krisos45:candidate*owned-nevra*) printf 'base\t0:2.0-1.fc45.x86_64\n' ;;
       *ghcr.io/krism-eu/krisos45:m1*owned-nevra*) printf 'base\t0:1.0-1.fc45.x86_64\n' ;;
       *) exit 2 ;;
     esac
@@ -122,7 +121,7 @@ case "$1" in
   *) exit 2 ;;
 esac
 ''')
-            sudo.chmod(0o755)
+            podman.chmod(0o755)
             skopeo = bindir / 'skopeo'
             skopeo.write_text('''#!/bin/sh
 case "$1" in
@@ -153,16 +152,44 @@ esac
 
     def test_workflow_release_permissions_and_serialization_contract(self):
         build = (ROOT / '.github/workflows/build-m1.yml').read_text()
+        publish = (ROOT / '.github/workflows/publish-candidate.yml').read_text()
+        promote = (ROOT / '.github/workflows/promote-m1.yml').read_text()
         sync = (ROOT / '.github/workflows/sync-kriscc.yml').read_text()
-        self.assertIn('group: build-m1-${{ github.ref }}', build)
-        self.assertIn("expected = 'group: build-m1-$' + '{{ github.ref }}'", build)
-        self.assertNotIn("grep -Fq 'group: build-m1-${{ github.ref }}'", build)
-        self.assertIn('packages: write', build)
+
+        self.assertIn('group: validate-m1-${{ github.ref }}', build)
+        self.assertNotIn('packages: write', build)
+        self.assertNotIn('id-token: write', build)
+        self.assertIn('pull_request:', build)
+
+        self.assertIn('group: publish-m1-candidate', publish)
+        self.assertIn('packages: write', publish)
+        self.assertIn('id-token: write', publish)
+        self.assertNotIn('target="docker://ghcr.io/krism-eu/krisos45:m1"', publish)
+        self.assertIn('Publish immutable candidate only', publish)
+
+        self.assertIn('environment: stable-promotion', promote)
+        self.assertIn('cosign verify', promote)
+        self.assertIn('tests/run-release-vm.sh', promote)
+        self.assertIn('target="docker://ghcr.io/krism-eu/krisos45:m1"', promote)
+        self.assertLess(promote.index('cosign verify'), promote.index('tests/run-release-vm.sh'))
+        self.assertLess(promote.index('tests/run-release-vm.sh'), promote.index('target="docker://ghcr.io/krism-eu/krisos45:m1"'))
+
         self.assertIn('pull-requests: write', sync)
         self.assertNotIn('gh workflow run', sync)
-        self.assertFalse((ROOT / '.github/workflows/promote-m1.yml').exists())
-        self.assertIn('Advance m1 to latest green build', build)
-        self.assertIn("github.event_name == 'push'", build)
+
+    def test_vm_gate_contains_real_rk_add_remove_and_reboot_persistence(self):
+        source = (ROOT / 'tests/run-release-vm.sh').read_text()
+        add = source.index('sudo /usr/bin/rk add')
+        switch = source.index('sudo bootc switch')
+        candidate_add = source.index('rk_add_fixture', source.index('verify_rk_package_present', switch))
+        reboot = source.index('run_release_check prepare-reboot')
+        remove = source.index('rk_remove_fixture', reboot)
+        verify_absent = source.index('verify_rk_package_absent', remove)
+        self.assertLess(add, switch)
+        self.assertLess(switch, candidate_add)
+        self.assertLess(candidate_add, reboot)
+        self.assertLess(reboot, remove)
+        self.assertLess(remove, verify_absent)
 
 
 if __name__ == '__main__':

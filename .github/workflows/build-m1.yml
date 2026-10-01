@@ -1,467 +1,55 @@
-name: Build M1
+name: Build M1 Validation
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    # Fedora 45 Branched: refresh from Minimal :latest once per day.
-    # After Fedora 45 stable this becomes weekly.
-    - cron: '17 5 * * *'
   workflow_dispatch:
     inputs:
       base_image:
-        description: "Optional explicit bootc base image for compatibility testing"
+        description: "Optional exact/tagged Fedora bootc base; resolved to digest by the shared gate"
         required: false
         type: string
-      publish:
-        description: "Publish this validated build as an immutable candidate"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-m1-${{ github.ref }}
-  cancel-in-progress: false
+  group: validate-m1-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Fedora 45 minimal build
+  validate:
+    name: Read-only candidate validation
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
-      packages: write
-      id-token: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          fetch-depth: 0
 
-      - name: Validate source invariants
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash -n systemd/krisos-overlay.sh
-          bash -n tests/boot-check.sh
-          bash -n tests/release-check.sh
-          bash -n tests/run-release-vm.sh
-          bash -n scripts/fetch-kriscc-component.sh
-          bash -n scripts/repair-home-labels.sh
-          bash -n scripts/check-initramfs-accounts.sh
-          bash -n build_files/99krisos-nss/module-setup.sh
-          python3 -m py_compile bin/rk tools/source_snapshot.py
-          python3 tests/test_rk.py
-          python3 tests/test_rk_recovery.py
-          python3 tests/test_release_state.py
-          python3 tests/test_release_shell.py
-          python3 tests/test_overlay_recovery.py
-          python3 tests/test_overlay_identity.py
-          grep -Fxq 'ARG BASE_IMAGE=quay.io/bootc-devel/fedora-bootc-45-minimal:latest' Containerfile
-          grep -Fq "distro-sync" Containerfile
-          test -s build_files/60-krisos-runtime-state.conf
-          grep -Fxq 'd /var/lib/containers 0755 root root - -' build_files/60-krisos-runtime-state.conf
-          grep -Fxq 'd /var/lib/tpm2-tss 0755 root root - -' build_files/60-krisos-runtime-state.conf
-          grep -Fxq 'd /var/lib/tpm2-tss/system 0755 root root - -' build_files/60-krisos-runtime-state.conf
-          grep -Fq 'find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true' Containerfile
-          grep -Fq '/var/lib/systemd/random-seed' Containerfile
-          grep -Fq 'bootc container lint --fatal-warnings' Containerfile
-          grep -Fq "'/usr/share/dnf5'" bin/rk
-          grep -Fq "'/usr/share/pki/rpm-gpg'" bin/rk
-          grep -Fq "'/usr/lib/rpm'" bin/rk
-          grep -Fq "'/usr/lib/sysusers.d'" bin/rk
-          grep -Fq "'/usr/lib/tmpfiles.d'" bin/rk
-          grep -Fq "'/usr/lib/systemd'" bin/rk
-          grep -Fq "'/usr/lib/firewalld'" bin/rk
-          grep -Fq "'/usr/lib/selinux'" bin/rk
-          grep -Fq "'/usr/share/selinux'" bin/rk
-          grep -Fq '%{FILELINKTOS}' bin/rk
-          grep -Fq '%{FILECAPS}' bin/rk
-          grep -Fq 'listing = subprocess.check_output(' bin/rk
-          grep -Fq 'Special files are not supported' bin/rk
-          grep -Fq 'setuid/setgid files are not supported' bin/rk
-          grep -Fq 'File capabilities are not supported' bin/rk
-          grep -Fq "RPM = '/usr/bin/rpm'" bin/rk
-          grep -Fq 'rpm -Uvh --nosignature /tmp/krisCC.rpm' Containerfile
-          source build_files/krisCC.lock
-          : "${KRISCC_SHA256:?KRISCC_SHA256 missing from lock}"
-          [[ "$KRISCC_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]]
-          [[ "$KRISCC_RPM" =~ ^krisCC-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc(44|45)\.x86_64\.rpm$ ]]
-          [[ "$KRISCC_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          grep -Fxq nano build_files/base-packages.txt
-          grep -Fxq isoimagewriter build_files/base-packages.txt
-          grep -Fxq plasma-discover build_files/base-packages.txt
-          grep -Fxq plasma-discover-flatpak build_files/base-packages.txt
-          grep -Fxq libcanberra-backend-pulse build_files/base-packages.txt
-          grep -Fxq cockpit build_files/base-packages.txt
-          ! grep -Fxq gwenview build_files/base-packages.txt
-          grep -Fxq 'Hidden=true' build_files/krisCC-autostart.desktop
-          grep -Fq 'COPY build_files/krisCC/krisCC.rpm /tmp/krisCC.rpm' Containerfile
-          python3 - <<'PY'
-          from pathlib import Path
-          text = Path("Containerfile").read_text()
-          kriscc = text.index("COPY build_files/krisCC/krisCC.rpm /tmp/krisCC.rpm")
-          hardening = text.index("COPY build_files/55-krisos-hardening.conf")
-          snapshot = text.index("# Snapshot every immutable package name owned by the final image")
-          if not (hardening < kriscc < snapshot):
-              raise SystemExit("krisCC must remain a late image-owned layer before ownership snapshots")
-          PY
-          ! grep -Fq 'github.com/krism-eu/krisCC.git' Containerfile
-          ! grep -Fq 'KRISCC_COMMIT' Containerfile
-          grep -Fxq 'ARG RELEASE=0.1.0-m1' Containerfile
-          grep -Fq 'rpm -q krisCC' Containerfile
-          grep -Fq 'grep -Fxq krisCC /usr/share/krisos/owned-packages.txt' Containerfile
-          grep -Fq 'HOME=/var/home' Containerfile
-          grep -Fq 'semodule -B' Containerfile
-          grep -Fq 'dracut --force --no-hostonly --early-microcode --reproducible --zstd' Containerfile
-          grep -Fq 'dracut-crypt-generator' Containerfile
-          grep -Fq 'libcanberra-pulse.so' Containerfile
-          grep -Fq 'AuthenticAMD.bin' Containerfile
-          grep -Fq 'rtl8168-source-nevra.txt' Containerfile
-          grep -Fq '/usr/share/krisos/firmware-provenance/rtl8168h-2-source-nevra.txt' Containerfile
-          grep -Fq 'COPY systemd/krisos-sync.timer /usr/lib/systemd/system/krisos-sync.timer' Containerfile
-          grep -Fq 'systemctl enable krisos-sync.timer' Containerfile
-          ! grep -Fq 'systemctl enable krisos-sync.service' Containerfile
-          grep -Fxq '[*]' build_files/90-krisos-privacy.repo
-          grep -Fxq 'countme=false' build_files/90-krisos-privacy.repo
-          grep -Fxq '[UserFeedback]' build_files/KDE-UserFeedback.conf
-          grep -Fxq 'Enabled=false' build_files/KDE-UserFeedback.conf
-          grep -Fq "payload['requests'] = sorted(persisted_names(package_file.read_text()))" bin/rk
-          grep -Fq "re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9+_.-]{0,127}'" bin/rk
-          grep -Fq 'state=/var/lib/krisos' systemd/krisos-overlay.sh
-          grep -Fq '/usr/bin/sync -f "$state"' systemd/krisos-overlay.sh
-          grep -Fq 'unexpected overlay is already mounted on /usr' systemd/krisos-overlay.sh
-          grep -Fq 'sentinel_dir="/usr/share/krisos-e2e"' tests/release-check.sh
-          grep -Fq 'upper_sentinel="/var/lib/krisos/upper/share/krisos-e2e/' tests/release-check.sh
-          grep -Fq 'verify-switch' tests/run-release-vm.sh
-          grep -Fq 'overlay cache missing or invalid' systemd/krisos-overlay.sh
-          grep -Fq "document['status']['booted']['ostree']" tests/release-state.py
-          test -x bin/rk
-          test -x scripts/fetch-kriscc-component.sh
-          test -s .containerignore
-          grep -Fxq '.git' .containerignore
-          grep -Fxq 'tests' .containerignore
-          python3 - <<'PY'
-          from pathlib import Path
-          workflow = Path('.github/workflows/build-m1.yml').read_text()
-          expected = 'group: build-m1-$' + '{{ github.ref }}'
-          if expected not in workflow:
-              raise SystemExit('build concurrency contract is missing')
-          PY
-          grep -Fq 'packages: write' .github/workflows/build-m1.yml
-          grep -Fq 'pull-requests: write' .github/workflows/sync-kriscc.yml
-          ! grep -Fq 'gh workflow run' .github/workflows/sync-kriscc.yml
-          test ! -e .github/workflows/promote-m1.yml
-          grep -Fxq '__pycache__/' .gitignore
-          grep -Fxq '*.pyc' .gitignore
-          grep -Fxq 'build_files/krisCC/' .gitignore
-          grep -Fq 'test "$kernel_count" -eq 1' Containerfile
-          grep -Fq 'After=ostree-remount.service' systemd/krisos-overlay.service
-          grep -Fq 'Before=local-fs.target shutdown.target' systemd/krisos-overlay.service
-          grep -Fq 'TimeoutStartSec=10min' systemd/krisos-overlay.service
-          grep -Fq 'Wants=network-online.target' systemd/krisos-sync.service
-          grep -Fq 'After=multi-user.target krisos-overlay.service network-online.target' systemd/krisos-sync.service
-          grep -Fq 'ExecStart=/usr/bin/rk sync' systemd/krisos-sync.service
-          grep -Fq 'ConditionPathExists=/var/lib/krisos/needs-sync' systemd/krisos-sync.service
-          grep -Fq 'ConditionPathExists=/run/krisos/overlay-mounted' systemd/krisos-sync.service
-          grep -Fq 'TimeoutStartSec=10min' systemd/krisos-sync.service
-          grep -Fq 'Restart=on-failure' systemd/krisos-sync.service
-          grep -Fq 'RestartSec=30s' systemd/krisos-sync.service
-          grep -Fq 'StartLimitIntervalSec=10min' systemd/krisos-sync.service
-          grep -Fq 'StartLimitBurst=3' systemd/krisos-sync.service
-          ! grep -Fq 'WantedBy=graphical.target' systemd/krisos-sync.service
-          grep -Fq 'OnBootSec=1min' systemd/krisos-sync.timer
-          grep -Fq 'OnUnitInactiveSec=10min' systemd/krisos-sync.timer
-          grep -Fq 'Unit=krisos-sync.service' systemd/krisos-sync.timer
-          grep -Fq 'WantedBy=timers.target' systemd/krisos-sync.timer
-          grep -Fq 'excludepkgs=*.i686' build_files/dnf-krisos.conf
-          grep -Fq 'multilib_policy=best' build_files/dnf-krisos.conf
-          grep -Fxq 'install_weak_deps=False' build_files/dnf-krisos.conf
-          legacy_prefix='ra''ku'
-          ! grep -RniE "${legacy_prefix}[-_ ]?kris|${legacy_prefix}os" --exclude-dir=.git .
-          test ! -e installer
-          test ! -e kickstart/krisos.ks
-          test ! -e .github/workflows/build-installer.yml
-
-      - name: Build exact source bundle
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p artifacts/source
-          display_ref="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          zip="KrisOS-${GITHUB_SHA}-source.zip"
-          txt="KrisOS-${GITHUB_SHA}-source.txt"
-          python3 tools/source_snapshot.py \
-            --repository krism-eu/krisOS45 \
-            --ref "$GITHUB_SHA" \
-            --display-ref "$display_ref" \
-            --version '0.1.0-m1' \
-            --output "artifacts/source/$txt"
-          git archive --format=zip --prefix="KrisOS-${GITHUB_SHA}/" \
-            --output="artifacts/source/$zip" "$GITHUB_SHA"
-          grep -Fxq "# commit: $GITHUB_SHA" "artifacts/source/$txt"
-          (cd artifacts/source && sha256sum "$zip" "$txt" > SHA256SUMS && sha256sum -c SHA256SUMS)
-
-      - name: Fetch verified krisCC component
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          source build_files/krisCC.lock
-          : "${KRISCC_SHA256:?KRISCC_SHA256 missing from lock}"
-          bash scripts/fetch-kriscc-component.sh
-          test -f build_files/krisCC/krisCC.rpm
-          test -s build_files/krisCC/SHA256SUMS
-          test "$(cat build_files/krisCC/RELEASE_TAG)" = "$KRISCC_TAG"
-          test "$(cat build_files/krisCC/RELEASE_ASSET)" = "$KRISCC_RPM"
-          test "$(cat build_files/krisCC/RELEASE_SHA256)" = "$KRISCC_SHA256"
-
-      - name: Install Podman
+      - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman skopeo
-          sudo podman version
+          sudo apt-get install -y podman skopeo rpm
+          podman version
+          skopeo --version
 
-      - name: Resolve Fedora 45 Minimal base
-        id: fedora_base
-        shell: bash
+      - name: Run the shared local/CI hardening gate
         env:
-          BASE_IMAGE_OVERRIDE: ${{ inputs.base_image }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${BASE_IMAGE_OVERRIDE:-}" ]]; then
-            requested="${BASE_IMAGE_OVERRIDE}"
-            echo "Compatibility build with explicit base: $requested"
-          else
-            requested="$(sed -n 's/^ARG BASE_IMAGE=//p' Containerfile | head -n1)"
-            test "$requested" = 'quay.io/bootc-devel/fedora-bootc-45-minimal:latest'
-          fi
+          GH_TOKEN: ${{ github.token }}
+          KRISOS_BASE_IMAGE: ${{ inputs.base_image }}
+          KRISOS_LOCAL_TAG: localhost/krisos45:pr-validation
+          KRISOS_SOURCE_REVISION: ${{ github.sha }}
+        run: ./tests/local-hardening-check.sh
 
-          if [[ "$requested" =~ @sha256:[0-9a-f]{64}$ ]]; then
-            resolved="$requested"
-          else
-            digest="$(skopeo inspect --format '{{.Digest}}' "docker://$requested")"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            repo="${requested%:*}"
-            resolved="${repo}@${digest}"
-          fi
-
-          printf 'requested=%s\nresolved=%s\n' "$requested" "$resolved" > fedora45-base.txt
-          echo "Resolved Fedora 45 Minimal: $resolved"
-          echo "image=$resolved" >> "$GITHUB_OUTPUT"
-
-      - name: Build bootc image
-        shell: bash
-        env:
-          RESOLVED_BASE_IMAGE: ${{ steps.fedora_base.outputs.image }}
-        run: |
-          set -euo pipefail
-          [[ -n "$RESOLVED_BASE_IMAGE" ]]
-          sudo podman build --pull=always \
-            --build-arg "BASE_IMAGE=$RESOLVED_BASE_IMAGE" \
-            --label 'org.opencontainers.image.source=https://github.com/krism-eu/krisOS45' \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            -t localhost/krisos45:m1 . 2>&1 | tee build.log
-
-      - name: Inspect built image
-        shell: bash
-        run: |
-          set -euo pipefail
-          source build_files/krisCC.lock
-          expected_kriscc="${KRISCC_RPM#krisCC-}"
-          expected_kriscc="${expected_kriscc%.rpm}"
-          test "$(sudo podman inspect localhost/krisos45:m1 --format '{{ index .Config.Labels "containers.bootc" }}')" = "1"
-          test "$(sudo podman inspect localhost/krisos45:m1 --format '{{ index .Config.Labels "ostree.bootable" }}')" = "1"
-          test "$(sudo podman inspect localhost/krisos45:m1 --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "0.1.0-m1"
-          test "$(sudo podman inspect localhost/krisos45:m1 --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "${GITHUB_SHA}"
-          sudo podman run --rm -e KRISCC_EXPECTED="$expected_kriscc" --entrypoint /bin/bash localhost/krisos45:m1 -lc '
-            test "$(rpm -q --qf "%{VERSION}-%{RELEASE}.%{ARCH}" krisCC)" = "$KRISCC_EXPECTED" &&
-            rpm -V krisCC &&
-            rpm -q iputils plasma-milou upower p11-kit-server nano isoimagewriter plasma-discover plasma-discover-flatpak libcanberra-backend-pulse cockpit cockpit-system cockpit-ws &&
-            test -f /usr/lib64/libcanberra-0.30/libcanberra-pulse.so &&
-            ! rpm -q gwenview >/dev/null 2>&1 &&
-            ! rpm -q plasma-discover-notifier >/dev/null 2>&1 &&
-            ! rpm -q plasma-discover-packagekit >/dev/null 2>&1 &&
-            ! rpm -q PackageKit >/dev/null 2>&1 &&
-            test -x /usr/bin/isoimagewriter &&
-            test -x /usr/bin/plasma-discover &&
-            test -x /usr/libexec/cockpit-tls &&
-            test -x /usr/libexec/krisos/repair-home-labels &&
-            test -x /usr/bin/krisCC &&
-            grep -Fxq "HOME=/var/home" /etc/default/useradd &&
-            matchpathcon -n /var/home/kris | grep -q ":user_home_dir_t:" &&
-            test -s "/usr/lib/modules/$(ls /usr/lib/modules | head -n1)/initramfs.img" &&
-            crypt_img="/usr/lib/modules/$(ls /usr/lib/modules | head -n1)/initramfs.img" &&
-            lsinitrd -f /usr/lib/systemd/system-generators/dracut-crypt-generator "$crypt_img" > /tmp/dracut-crypt-generator &&
-            grep -Fq "[ -e /etc/crypttab ] || exit 0" /tmp/dracut-crypt-generator &&
-            grep -Fq "[ -n \"\$GENERATOR_DIR\" ] || exit 1" /tmp/dracut-crypt-generator &&
-            ! grep -Fq "[ -e /etc/crypttab ] || return 0" /tmp/dracut-crypt-generator &&
-            ! grep -Fq "[ -n \"\$GENERATOR_DIR\" ] || return 1" /tmp/dracut-crypt-generator &&
-            systemctl is-enabled krisos-sync.timer | grep -qx enabled &&
-            systemctl is-enabled cockpit.socket 2>&1 | grep -qx disabled &&
-            grep -Fxq krisCC /usr/share/krisos/owned-packages.txt &&
-            grep -Fxq "countme=false" /etc/dnf/repos.override.d/90-krisos-privacy.repo &&
-            grep -Fxq "install_weak_deps=False" /etc/dnf/libdnf5.conf.d/90-krisos.conf &&
-            grep -Fxq "Enabled=false" /etc/xdg/KDE/UserFeedback.conf &&
-            grep -Fxq "Hidden=true" /etc/xdg/autostart/krisCC-background.desktop &&
-            env QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic KRISCC_SMOKE_TEST=1 /usr/bin/krisCC
-          '
-
-      - name: Capture exact package provenance and drift
-        shell: bash
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          sudo podman run --rm --entrypoint /bin/cat localhost/krisos45:m1 \
-            /usr/share/krisos/owned-nevra.txt > owned-nevra.txt
-          sudo podman run --rm --entrypoint /bin/cat localhost/krisos45:m1 \
-            /usr/share/krisos/firmware-provenance/rtl8168h-2-source-nevra.txt > firmware-source-nevra.txt
-          test -s owned-nevra.txt
-          grep -Eq '^linux-firmware[[:space:]]' firmware-source-nevra.txt
-          LC_ALL=C sort -c owned-nevra.txt
-
-          : > package-drift.txt
-          authfile="$(mktemp "${RUNNER_TEMP:-/tmp}/krisos-ghcr-auth.XXXXXX")"
-          chmod 0600 "$authfile"
-          trap 'rm -f "$authfile"' EXIT
-          printf '{"auths":{}}\n' > "$authfile"
-          # Drift comparison is informational. Prefer authenticated GHCR access
-          # so it also works when the package visibility is private; fall back to
-          # anonymous access without turning absence of a baseline into a build failure.
-          if [[ -n "${GHCR_TOKEN:-}" ]] && printf '%s' "$GHCR_TOKEN" | \
-                skopeo login --authfile "$authfile" ghcr.io --username "$GHCR_USER" --password-stdin \
-                >/dev/null 2>&1; then
-            echo 'Package drift baseline: authenticated GHCR access available.'
-          else
-            printf '{"auths":{}}\n' > "$authfile"
-            echo 'Package drift baseline: authenticated GHCR access unavailable; trying anonymous access.'
-          fi
-          previous='ghcr.io/krism-eu/krisos45:m1'
-          if previous_digest="$(skopeo inspect --authfile "$authfile" --format '{{.Digest}}' "docker://$previous" 2>/dev/null)"; then
-            printf '%s\n' "$previous_digest" > previous-m1.digest
-            if sudo podman pull --authfile "$authfile" "$previous" >/dev/null 2>&1; then
-              sudo podman run --rm --entrypoint /bin/cat "$previous" \
-                /usr/share/krisos/owned-nevra.txt > previous-owned-nevra.txt
-              test -s previous-owned-nevra.txt
-              diff -u previous-owned-nevra.txt owned-nevra.txt > package-drift.txt || true
-            else
-              printf 'Previous m1 exists but could not be pulled for drift comparison.\n' > package-drift.txt
-            fi
-          else
-            printf 'No previous m1 baseline was available for package drift comparison.\n' > package-drift.txt
-          fi
-
-      - name: Real RPM package layer integration
-        run: |
-          set -euo pipefail
-          sudo podman run --rm --security-opt label=disable \
-            -e RK_DISPOSABLE_CONTAINER_TEST=1 \
-            -v "$PWD/tests/test_rk_container.py:/tmp/test-rk.py:ro" \
-            --entrypoint python3 localhost/krisos45:m1 /tmp/test-rk.py \
-            2>&1 | tee rk-integration.log
-
-      # Pull requests are validation-only. Pushes on main, scheduled runs and
-      # explicit publish dispatches rebuild from Fedora 45 Minimal and advance
-      # m1 only after the complete image and rk integration gates pass.
-      - name: Install Cosign
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.base_image == ''))
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: 'v3.0.6'
-
-      - name: Login to GHCR
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.base_image == ''))
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$HOME/.docker"
-          printf '%s' "$GHCR_TOKEN" | podman login --authfile "$HOME/.docker/config.json" \
-            ghcr.io --username "$GHCR_USER" --password-stdin
-
-      - name: Publish immutable candidate
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.base_image == ''))
-        shell: bash
-        run: |
-          set -euo pipefail
-          immutable="ghcr.io/krism-eu/krisos45:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          if skopeo inspect --authfile "$HOME/.docker/config.json" "docker://$immutable" >/dev/null 2>&1; then
-            echo "Immutable build tag already exists; refusing to overwrite: $immutable" >&2
-            exit 1
-          fi
-          sudo podman tag localhost/krisos45:m1 "$immutable"
-          sudo podman push --authfile "$HOME/.docker/config.json" \
-            --digestfile publish.digest "$immutable" 2>&1 | tee publish-immutable.log
-          grep -Eq '^sha256:[0-9a-f]{64}$' publish.digest
-
-      - name: Sign and verify immutable digest
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.base_image == ''))
-        run: |
-          set -euo pipefail
-          digest="$(cat publish.digest)"
-          image="ghcr.io/krism-eu/krisos45@${digest}"
-          cosign sign --yes "$image"
-          cosign verify \
-            --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/build-m1.yml@refs/heads/main' \
-            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-            "$image" 2>&1 | tee cosign-verify.log
-
-      - name: Verify anonymous immutable pull
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.base_image == ''))
-        run: |
-          set -euo pipefail
-          immutable="ghcr.io/krism-eu/krisos45:build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          expected="$(cat publish.digest)"
-          sudo podman rmi -f "$immutable" localhost/krisos45:m1 || true
-          authfile="$(mktemp "${RUNNER_TEMP:-/tmp}/krisos-anon-auth.XXXXXX")"
-          chmod 0600 "$authfile"
-          trap 'rm -f "$authfile"' EXIT
-          printf '{"auths":{}}\n' > "$authfile"
-          skopeo inspect --raw --authfile "$authfile" "docker://$immutable" > anonymous-immutable-manifest.json
-          actual="sha256:$(sha256sum anonymous-immutable-manifest.json | awk '{print $1}')"
-          test "$actual" = "$expected"
-
-      - name: Advance m1 to latest green build
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish && inputs.base_image == ''))
-        shell: bash
-        run: |
-          set -euo pipefail
-          digest="$(cat publish.digest)"
-          source="docker://ghcr.io/krism-eu/krisos45@${digest}"
-          target="docker://ghcr.io/krism-eu/krisos45:m1"
-          skopeo copy --all --authfile "$HOME/.docker/config.json" "$source" "$target"
-          promoted="$(skopeo inspect --authfile "$HOME/.docker/config.json" --format '{{.Digest}}' "$target")"
-          test "$promoted" = "$digest"
-          printf '%s\n' "$digest" > promoted-m1.digest
-          echo "m1 now points to latest green build: $digest"
-
-      - name: Preserve complete logs and source identity
+      - name: Preserve validation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: build-m1-${{ github.sha }}-${{ github.run_id }}
+          name: validate-m1-${{ github.sha }}-${{ github.run_id }}
           path: |
-            artifacts/source/
-            build.log
             fedora45-base.txt
-            owned-nevra.txt
-            firmware-source-nevra.txt
-            previous-owned-nevra.txt
-            previous-m1.digest
-            package-drift.txt
+            build.log
             rk-integration.log
-            publish.digest
-            publish-immutable.log
-            cosign-verify.log
-            anonymous-immutable-manifest.json
-            promoted-m1.digest
           if-no-files-found: ignore
