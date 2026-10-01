@@ -85,7 +85,8 @@ effetti persistenti o di boot fuori dall'upper, tra cui:
 
 I trigger appartenenti a pacchetti Fedora già installati possono comunque
 reagire a una transazione RPM; per questo il modello non promette compatibilità
-con RPM desktop arbitrari e i gate VM restano necessari.
+con RPM desktop arbitrari. Il VM harness resta raccomandato per validare questi
+effetti su un sistema reale, ma non è un gate automatico di `promote-m1.yml`.
 
 ## Recovery
 

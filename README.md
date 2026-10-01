@@ -72,7 +72,7 @@ ricostruzione già richiesta da `needs-sync`.
 
 ## Cadenza immagini
 
-Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue i gate e, sul percorso di pubblicazione, produce e firma un candidate immutabile. Il tag mobile `ghcr.io/krism-eu/krisos45:m1` non viene aggiornato automaticamente: avanza solo tramite `promote-m1.yml`, dopo autorizzazione dell'environment protetto, verifica Cosign e gate VM reale. Il sistema installato non si aggiorna da solo: `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e l'utente decide quando eseguire l'update. Dopo Fedora 45 stable la build candidate passa a cadenza settimanale.
+Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue i gate e, sul percorso di pubblicazione, produce e firma un candidate immutabile. Il tag mobile `ghcr.io/krism-eu/krisos45:m1` non viene aggiornato automaticamente: avanza solo tramite `promote-m1.yml`, dopo autorizzazione dell'environment protetto e verifica Cosign del digest firmato. Il VM harness resta disponibile come validazione manuale separata e non è un gate automatico di `promote-m1.yml`. Il sistema installato non si aggiorna da solo: `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e l'utente decide quando eseguire l'update. Dopo Fedora 45 stable la build candidate passa a cadenza settimanale.
 
 `krisCC` non avvia automaticamente nuove build KrisOS: resta congelato nell'immagine finché la versione applicativa non viene dichiarata definitiva.
 
@@ -97,8 +97,8 @@ Il componente image-owned è congelato su `krisCC 0.8.1-1.fc45` tramite `build_f
 
 ## Validazione VM
 
-I container non certificano OverlayFS reale, reboot o recovery. Il gate VM usa
-`tests/run-release-vm.sh`. Con `KRISOS_E2E_SWITCH_IMAGE` impostato verifica sia
+I container non certificano OverlayFS reale, reboot o recovery. La validazione VM manuale usa
+`tests/run-release-vm.sh`; non viene invocata dalla promotion automatica di `m1`. Con `KRISOS_E2E_SWITCH_IMAGE` impostato verifica sia
 la persistenza sullo stesso deployment sia l'invalidazione su cambio deployment:
 la sentinella viene scritta sotto `/usr/share/krisos-e2e` e deve esistere anche
 fisicamente in `/var/lib/krisos/upper`; dopo `bootc switch` deve sparire da

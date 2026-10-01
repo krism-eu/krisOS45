@@ -9,12 +9,12 @@ This candidate deliberately preserves the original SELinux/home model. The exper
 - `rk` exact root:root `0600` transaction lock, protected RPM-owned namespaces, transaction-wide symlink validation with nested incoming symlinks rejected, exact root-owned pre-existing symlink reuse, special/setuid/capability rejection, strict existing-directory metadata validation, a narrowly allowlisted Fedora UsrMerge `/usr/sbin -> /usr/bin` directory alias, fail-safe `status --json` state reporting, and a traceback-free CLI boundary compatible with the modern libdnf5 SWIG exception hierarchy.
 - Overlay recovery durability: `needs-sync` is persisted before destructive recovery and is armed on overlay relabel/mount failure so the next boot retries a rebuild.
 - Exact disabled/masked update-timer checks at image build and release validation time.
-- Real release-VM `rk add` / reboot / switch / resync / `rk rm` / reboot persistence checks.
+- Manual release-VM harness for `rk add` / reboot / switch / resync / `rk rm` / reboot persistence checks.
 - Shared `tests/local-hardening-check.sh` used by both local validation and GitHub CI. It resolves the Fedora base to an immutable digest before building; the krisCC adoption candidate build follows the same digest-pinning rule.
 - CI privilege separation:
   - PR/manual validation is read-only.
   - main/scheduled publication may publish and keylessly sign an immutable candidate digest, but cannot advance `m1`.
-  - `m1` promotion is a separate protected-environment workflow and requires Cosign identity verification plus the real VM gate before the digest is copied to `m1`.
+  - `m1` promotion is a separate protected-environment workflow and requires Cosign identity verification before the digest is copied to `m1`; the VM harness is manual and is not part of the automated promotion workflow.
 
 ## Verification in this package
 
@@ -34,14 +34,7 @@ The local gate and GitHub build workflows call the same build/test path rather t
 
 ## Stable-promotion environment
 
-The `stable-promotion` GitHub environment must provide:
-
-- `KRISOS_E2E_SSH_KEY`
-- `KRISOS_E2E_KNOWN_HOSTS`
-- `KRISOS_E2E_TARGET`
-- optional `KRISOS_EXPECT_ADMIN_USER`
-
-Environment protection/review should be configured in GitHub so stable promotion is explicitly authorized.
+The `stable-promotion` GitHub environment does not require the former `KRISOS_E2E_*` VM secrets because `promote-m1.yml` no longer runs the VM harness. Environment protection/review should still be configured in GitHub so stable promotion is explicitly authorized.
 
 ## krisCC release access prerequisite
 

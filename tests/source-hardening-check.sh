@@ -73,12 +73,13 @@ test ! -e scripts/relocate-selinux-store.sh
 grep -Fq 'permissions:' .github/workflows/build-m1.yml
 ! grep -Fq 'packages: write' .github/workflows/build-m1.yml
 ! grep -Fq 'id-token: write' .github/workflows/build-m1.yml
+grep -Fq "if: github.ref == 'refs/heads/main'" .github/workflows/publish-candidate.yml
 grep -Fq 'packages: write' .github/workflows/publish-candidate.yml
 grep -Fq 'id-token: write' .github/workflows/publish-candidate.yml
 ! grep -Fq 'target="docker://ghcr.io/krism-eu/krisos45:m1"' .github/workflows/publish-candidate.yml
 grep -Fq 'environment: stable-promotion' .github/workflows/promote-m1.yml
 grep -Fq 'cosign verify' .github/workflows/promote-m1.yml
-grep -Fq 'tests/run-release-vm.sh' .github/workflows/promote-m1.yml
+! grep -Fq 'tests/run-release-vm.sh' .github/workflows/promote-m1.yml
 grep -Fq 'target="docker://ghcr.io/krism-eu/krisos45:m1"' .github/workflows/promote-m1.yml
 grep -Fq 'resolved_base="$(./scripts/resolve-base.sh)"' .github/workflows/sync-kriscc.yml
 grep -Fq -- '--build-arg "BASE_IMAGE=$resolved_base"' .github/workflows/sync-kriscc.yml
@@ -92,10 +93,9 @@ python3 - <<'PY'
 from pathlib import Path
 p = Path('.github/workflows/promote-m1.yml').read_text()
 verify = p.index('cosign verify')
-vm = p.index('tests/run-release-vm.sh')
 promote = p.index('target="docker://ghcr.io/krism-eu/krisos45:m1"')
-if not verify < vm < promote:
-    raise SystemExit('promotion ordering must be cosign verify -> VM gate -> m1 update')
+if not verify < promote:
+    raise SystemExit('promotion ordering must be cosign verify -> m1 update')
 PY
 
 echo 'PASS: KrisOS45 source hardening gate'

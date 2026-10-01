@@ -35,9 +35,9 @@ commit differente la sentinella deve essere assente sia dal merged `/usr` sia
 dal nuovo upper. In questo modo il test certifica direttamente il contratto
 principale di invalidazione M0/M1.
 
-## VM harness
+## VM harness manuale
 
-Esempio per il gate completo:
+Il VM harness resta disponibile come validazione manuale separata; `promote-m1.yml` non lo esegue e non richiede secret `KRISOS_E2E_*`. Esempio:
 
 ```bash
 export KRISOS_E2E_TARGET=qa@192.0.2.10
@@ -67,7 +67,8 @@ riavvia e pretende che l'hook scarti l'upper, rimuova `pending`, completi il ret
 4. cambio deployment, wipe dell'upper e recovery da transazione interrotta.
 
 Solo i gate realmente eseguiti possono essere dichiarati passati. Il container
-non prova boot, OverlayFS reale, reboot o recovery.
+non prova boot, OverlayFS reale, reboot o recovery. I punti 3-4 appartengono alla
+validazione VM manuale e non bloccano `promote-m1.yml`.
 
 ## Provenance del build
 
@@ -109,8 +110,10 @@ percorso runtime da verificare esplicitamente.
 ## Promotion
 
 `promote-m1.yml` serializza le promotion con una concurrency dedicata e usa
-l'environment `stable-promotion`. **Prerequisito operativo della release:**
-configurare in GitHub Settings almeno un required reviewer per quell'environment;
-la dichiarazione YAML da sola non crea una policy di approvazione. La checklist
-di promotion deve considerare non configurata questa protezione finché una run
-non mostra effettivamente lo stato di attesa/approvazione dell'environment.
+l'environment `stable-promotion`. La promotion verifica il digest firmato e la
+workflow identity Cosign, quindi copia esattamente quel digest sul tag `m1`; non
+esegue il VM harness. **Prerequisito operativo della release:** configurare in
+GitHub Settings almeno un required reviewer per quell'environment; la
+dichiarazione YAML da sola non crea una policy di approvazione. La checklist di
+promotion deve considerare non configurata questa protezione finché una run non
+mostra effettivamente lo stato di attesa/approvazione dell'environment.

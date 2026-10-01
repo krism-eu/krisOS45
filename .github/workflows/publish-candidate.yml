@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   publish:
+    if: github.ref == 'refs/heads/main'
     name: Build, validate, publish immutable digest
     runs-on: ubuntu-24.04
     timeout-minutes: 100

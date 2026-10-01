@@ -1,6 +1,6 @@
 # M1 notes — contratto del package layer
 
-**Stato:** implementato; i gate VM restano obbligatori per una release.
+**Stato:** implementato; il VM harness resta disponibile come validazione manuale e non blocca `promote-m1.yml`.
 
 M1 aggiunge `rk` sopra DNF5. `packages.list` contiene solo le richieste
 esplicite e l'overlay `/usr` è cache ricostruibile.
@@ -42,7 +42,8 @@ Fedora 45 di repo/trust e alla rpmdb. Anche i symlink interni all'RPM vengono
 risolti dal manifest prima della transazione.
 
 I trigger di pacchetti Fedora già installati possono ancora avere effetti
-collaterali; il gate VM resta parte del contratto.
+collaterali; il VM harness resta utile per osservarli su un sistema reale, ma non
+fa parte del gate automatico di promotion.
 
 ## Aggiornamenti overlay
 

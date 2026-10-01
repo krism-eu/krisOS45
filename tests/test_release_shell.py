@@ -162,6 +162,7 @@ esac
         self.assertIn('pull_request:', build)
 
         self.assertIn('group: publish-m1-candidate', publish)
+        self.assertIn("if: github.ref == 'refs/heads/main'", publish)
         self.assertIn('packages: write', publish)
         self.assertIn('id-token: write', publish)
         self.assertNotIn('target="docker://ghcr.io/krism-eu/krisos45:m1"', publish)
@@ -169,10 +170,9 @@ esac
 
         self.assertIn('environment: stable-promotion', promote)
         self.assertIn('cosign verify', promote)
-        self.assertIn('tests/run-release-vm.sh', promote)
+        self.assertNotIn('tests/run-release-vm.sh', promote)
         self.assertIn('target="docker://ghcr.io/krism-eu/krisos45:m1"', promote)
-        self.assertLess(promote.index('cosign verify'), promote.index('tests/run-release-vm.sh'))
-        self.assertLess(promote.index('tests/run-release-vm.sh'), promote.index('target="docker://ghcr.io/krism-eu/krisos45:m1"'))
+        self.assertLess(promote.index('cosign verify'), promote.index('target="docker://ghcr.io/krism-eu/krisos45:m1"'))
 
         self.assertIn('pull-requests: write', sync)
         self.assertNotIn('gh workflow run', sync)

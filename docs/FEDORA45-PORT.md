@@ -44,9 +44,9 @@ una pretesa di build bit-for-bit riproducibile.
 ## Stato dei gate
 
 La pipeline container F45 verifica sorgenti, build bootc, reale integrazione
-libdnf5/RPM, firma Cosign e pull immutabile. I gate VM restano separati e devono
-essere eseguiti prima di dichiarare una release stable: reboot sullo stesso
-deployment, cambio deployment con wipe reale dell'upper, recovery di una
+libdnf5/RPM, firma Cosign e pull immutabile. Il VM harness resta una validazione
+manuale separata, non un gate di `promote-m1.yml`: può verificare reboot sullo
+stesso deployment, cambio deployment con wipe reale dell'upper, recovery di una
 transazione interrotta e controllo SELinux dopo `semodule -B`.
 
 Il test VM usa una sentinella sotto `/usr/share/krisos-e2e` e verifica la
