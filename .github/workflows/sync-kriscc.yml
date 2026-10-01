@@ -130,15 +130,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get install -y podman
+          sudo apt-get install -y podman skopeo
           sudo podman version
+          skopeo --version
 
       - name: Build KrisOS candidate with new krisCC
         if: steps.candidate.outputs.changed == 'true'
         shell: bash
         run: |
           set -euo pipefail
+          resolved_base="$(./scripts/resolve-base.sh)"
+          [[ "$resolved_base" =~ @sha256:[0-9a-f]{64}$ ]]
           sudo podman build --pull=always \
+            --build-arg "BASE_IMAGE=$resolved_base" \
             --label 'org.opencontainers.image.source=https://github.com/krism-eu/krisOS45' \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             -t localhost/krisos45:kriscc-candidate . \

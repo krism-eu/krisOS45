@@ -99,11 +99,12 @@ Il payload Fedora 45 usa soltanto l'artefatto `fc45`; alla stable F45 definitiva
 deve adottare un build `fc45` con una trust chain più forte e rimuovere
 `--nosignature`.
 
-Gli smoke test krisCC sono volutamente due: la build payload prova l'avvio
-foreground, mentre adoption/release-check provano `--background`. `Hidden=true`
-nel file autostart significa che l'avvio automatico è disabilitato di default;
-non rende invalida la modalità background, che resta un percorso runtime da
-verificare esplicitamente.
+La build payload verifica integrità RPM (`rpm -V`), binario, desktop file e
+metadati installati; non avvia krisCC durante il `Containerfile`. Lo smoke runtime
+viene eseguito nei gate adoption/release-check con `--background` e backend Qt
+offscreen. `Hidden=true` nel file autostart significa che l'avvio automatico è
+disabilitato di default; non rende invalida la modalità background, che resta un
+percorso runtime da verificare esplicitamente.
 
 ## Promotion
 

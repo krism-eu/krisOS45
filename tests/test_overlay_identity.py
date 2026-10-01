@@ -13,7 +13,7 @@ NEW_COMMIT = "c" * 64
 
 
 class OverlayIdentity(unittest.TestCase):
-    def prepare(self, saved_commit, target_commit, deployserial="0", chcon_status=0, mount_status=0, mounts_text="", pending=False, missing_upper=False, missing_work=False):
+    def prepare(self, saved_commit, target_commit, deployserial="0", chcon_status=0, mount_status=0, mounts_text="", pending=False, needs_sync=False, missing_upper=False, missing_work=False):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -41,6 +41,8 @@ class OverlayIdentity(unittest.TestCase):
         (state / "deployment").write_text(f"default/{saved_commit}/0\n")
         if pending:
             (state / "pending").write_text("interrupted\n")
+        if needs_sync:
+            (state / "needs-sync").write_text("")
         runtime = root / "run" / "krisos"
 
         bindir = root / "bin"
@@ -127,6 +129,14 @@ class OverlayIdentity(unittest.TestCase):
         )
 
 
+    def test_existing_needs_sync_forces_rebuild_retry_on_same_deployment(self):
+        result, state, sentinel, runtime = self.prepare(NEW_COMMIT, NEW_COMMIT, needs_sync=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("package recovery still required — wiping overlay cache", result.stdout)
+        self.assertFalse(sentinel.exists())
+        self.assertTrue((state / "needs-sync").exists())
+        self.assertTrue((runtime / "overlay-mounted").exists())
+
     def test_pending_recovery_wipes_cache_and_clears_pending(self):
         result, state, sentinel, runtime = self.prepare(NEW_COMMIT, NEW_COMMIT, pending=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -146,11 +156,15 @@ class OverlayIdentity(unittest.TestCase):
 
     def test_changed_deployment_has_persistence_barrier_before_mount(self):
         text = SOURCE.read_text()
-        sync_index = text.index('/usr/bin/sync -f "$state"')
+        changed = text.index('if [ "$changed" -eq 1 ]; then')
+        marker_call = text.index('mark_recovery_intent', changed)
+        wipe_index = text.index('wipe_cache "$change_reason"', changed)
         mount_index = text.index('mount -t overlay overlay')
         identity_index = text.index("printf '%s\\n' \"$deployment_id\" > \"$saved\"")
-        self.assertLess(sync_index, mount_index)
+        self.assertLess(marker_call, wipe_index)
+        self.assertLess(wipe_index, mount_index)
         self.assertLess(mount_index, identity_index)
+
 
     def test_chcon_failure_keeps_recovery_intent_but_not_ready_marker(self):
         result, state, _, runtime = self.prepare(OLD_COMMIT, NEW_COMMIT, chcon_status=1)
@@ -167,6 +181,21 @@ class OverlayIdentity(unittest.TestCase):
         self.assertTrue((state / "needs-sync").exists())
         self.assertFalse((runtime / "overlay-mounted").exists())
         self.assertEqual((state / "deployment").read_text().strip(), f"default/{OLD_COMMIT}/0")
+
+    def test_same_deployment_mount_failure_arms_recovery_for_next_boot(self):
+        result, state, sentinel, runtime = self.prepare(NEW_COMMIT, NEW_COMMIT, mount_status=1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("overlay mount failed", result.stdout)
+        self.assertTrue(sentinel.exists())
+        self.assertTrue((state / "needs-sync").exists())
+        self.assertFalse((runtime / "overlay-mounted").exists())
+
+        result2, state2, sentinel2, runtime2 = self.prepare(NEW_COMMIT, NEW_COMMIT, needs_sync=True)
+        self.assertEqual(result2.returncode, 0, result2.stderr)
+        self.assertIn("package recovery still required — wiping overlay cache", result2.stdout)
+        self.assertFalse(sentinel2.exists())
+        self.assertTrue((state2 / "needs-sync").exists())
+        self.assertTrue((runtime2 / "overlay-mounted").exists())
 
 
 if __name__ == "__main__":

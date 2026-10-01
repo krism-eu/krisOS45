@@ -116,7 +116,14 @@ cups-filters
 # repeat it here: the base-collision check would reject it.
 iproute
 iputils
+ethtool
+pciutils
+usbutils
+smartmontools
+nvme-cli
 tar
+rsync
+unzip
 bash-completion
 nano
 ntfs-3g

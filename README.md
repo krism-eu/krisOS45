@@ -72,7 +72,7 @@ ricostruzione già richiesta da `needs-sync`.
 
 ## Cadenza immagini
 
-Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue tutti i gate e aggiorna `ghcr.io/krism-eu/krisos45:m1` soltanto se la build è verde. Il sistema installato non si aggiorna da solo: `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e `m1` è semplicemente l'ultima immagine pronta quando l'utente decide di eseguire l'update. Dopo Fedora 45 stable la stessa build passa a cadenza settimanale.
+Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue i gate e, sul percorso di pubblicazione, produce e firma un candidate immutabile. Il tag mobile `ghcr.io/krism-eu/krisos45:m1` non viene aggiornato automaticamente: avanza solo tramite `promote-m1.yml`, dopo autorizzazione dell'environment protetto, verifica Cosign e gate VM reale. Il sistema installato non si aggiorna da solo: `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e l'utente decide quando eseguire l'update. Dopo Fedora 45 stable la build candidate passa a cadenza settimanale.
 
 `krisCC` non avvia automaticamente nuove build KrisOS: resta congelato nell'immagine finché la versione applicativa non viene dichiarata definitiva.
 
@@ -80,8 +80,13 @@ Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:l
 
 ```bash
 bash scripts/fetch-kriscc-component.sh
-sudo podman build -t localhost/krisos45:m1 .
+resolved_base="$(bash scripts/resolve-base.sh)"
+sudo podman build --pull=always --build-arg "BASE_IMAGE=$resolved_base" \
+  -t localhost/krisos45:m1 .
 ```
+
+Per il gate locale completo usare `./tests/local-hardening-check.sh`, che esegue
+la stessa risoluzione a digest prima della build.
 
 La release CI esegue i test di policy, costruisce l'immagine, prova una vera
 transazione libdnf5/RPM in container, cattura la provenance pacchetti e, sul

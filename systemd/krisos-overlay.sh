@@ -30,6 +30,11 @@ for tok in "${cmdline_tokens[@]}"; do
         ostree=*) deploy_path="${tok#ostree=}" ;;
     esac
 done
+# /proc/cmdline may preserve a balanced pair of quotes around a value.
+if [[ "$deploy_path" == \"*\" ]]; then
+    deploy_path="${deploy_path#\"}"
+    deploy_path="${deploy_path%\"}"
+fi
 
 if [ -z "$deploy_path" ]; then
     log "no ostree= parameter in cmdline — skipping"
@@ -170,6 +175,20 @@ wipe_cache() {
     return 0
 }
 
+mark_recovery_intent() {
+    # Any failure before a healthy mount must become durable. Otherwise a
+    # same-deployment boot can trust the same broken cache forever.
+    if ! : > "$needs_sync"; then
+        log "WARNING: cannot create needs-sync marker — continuing on base /usr"
+        return 1
+    fi
+    if ! /usr/bin/sync -f "$state"; then
+        log "WARNING: cannot persist recovery intent — continuing on base /usr"
+        return 1
+    fi
+    return 0
+}
+
 saved_id=""
 if [ -f "$saved" ]; then
     IFS= read -r saved_id < "$saved" || saved_id=""
@@ -177,47 +196,44 @@ fi
 
 changed=0
 pending_recovery=0
+change_reason=""
 if [ -f "$state/pending" ]; then
     changed=1
     pending_recovery=1
-    if ! wipe_cache "interrupted package transaction"; then
-        exit 0
-    fi
+    change_reason="interrupted package transaction"
+elif [ -f "$needs_sync" ]; then
+    # A previous boot already committed recovery intent but did not converge.
+    # Rebuild again rather than trusting a possibly partial/failed upperdir.
+    changed=1
+    change_reason="package recovery still required"
 elif [ -z "$saved_id" ]; then
     changed=1
-    if ! wipe_cache "deployment identity not initialized"; then
-        exit 0
-    fi
+    change_reason="deployment identity not initialized"
 elif [ "$saved_id" != "$deployment_id" ]; then
     changed=1
-    if ! wipe_cache "deployment changed"; then
-        exit 0
-    fi
+    change_reason="deployment changed"
 elif [ ! -d "$upper" ] || [ ! -d "$work" ]; then
-    # The saved deployment alone is not enough to prove the cache is intact.
-    # If either OverlayFS directory vanished or became a non-directory, rebuild
-    # both and reconcile persisted package intent exactly like a deployment change.
     changed=1
-    if ! wipe_cache "overlay cache missing or invalid"; then
-        exit 0
-    fi
-else
-    : # same deployment and both cache directories are present
+    change_reason="overlay cache missing or invalid"
 fi
 
 if [ "$changed" -eq 1 ]; then
-    # Recovery intent must become durable before an interrupted marker is
-    # cleared and before a new deployment identity can ever be recorded.
-    if ! : > "$needs_sync"; then
-        log "WARNING: cannot create needs-sync marker — continuing on base /usr"
+    # Commit recovery intent BEFORE destroying any cache. This closes the
+    # failure window where upper/work could be emptied but no durable marker
+    # remained to force reconciliation on the next boot.
+    if ! mark_recovery_intent; then
         exit 0
     fi
+
+    if ! wipe_cache "$change_reason"; then
+        # needs-sync intentionally remains durable; the next boot retries.
+        exit 0
+    fi
+
     if [ "$pending_recovery" -eq 1 ] && ! rm -f -- "$state/pending"; then
         log "WARNING: cannot clear pending transaction marker — continuing on base /usr"
         exit 0
     fi
-    # Establish an ordering barrier: a power loss must not make the future
-    # deployment identity durable while an old upper/work cache can reappear.
     if ! /usr/bin/sync -f "$state"; then
         log "WARNING: cannot persist overlay reset state — continuing on base /usr"
         exit 0
@@ -228,6 +244,7 @@ fi
 # immutable /usr SELinux label onto that inode before mounting. Do not recurse:
 # payload labels are created through their logical /usr paths.
 if ! chcon --reference=/usr "$upper"; then
+    mark_recovery_intent || true
     log "WARNING: cannot label overlay root — continuing on base /usr (degraded)"
     exit 0
 fi
@@ -236,7 +253,8 @@ log "mounting persistent overlay on /usr"
 if ! mount -t overlay overlay \
         -o "lowerdir=/usr,upperdir=$upper,workdir=$work" \
         /usr; then
-    log "WARNING: overlay mount failed — continuing on base /usr (degraded)"
+    mark_recovery_intent || true
+    log "WARNING: overlay mount failed — recovery intent persisted; continuing on base /usr (degraded)"
     exit 0
 fi
 
