@@ -125,6 +125,7 @@ esac
         promote = (ROOT / '.github/workflows/promote-m1.yml').read_text()
         sync = (ROOT / '.github/workflows/sync-kriscc.yml').read_text()
 
+        self.assertIn('permissions:\n  contents: read', build)
         self.assertIn('group: validate-m1-${{ github.ref }}', build)
         self.assertNotIn('packages: write', build)
         self.assertNotIn('id-token: write', build)
@@ -143,6 +144,9 @@ esac
         self.assertLess(promote.index('cosign verify'), promote.index('target="docker://ghcr.io/krism-eu/krisos45:m1"'))
 
         self.assertIn('pull-requests: write', sync)
+        self.assertIn('resolved_base="$(./scripts/resolve-base.sh)"', sync)
+        self.assertIn('--build-arg "BASE_IMAGE=$resolved_base"', sync)
+        self.assertIn('sudo apt-get install -y podman skopeo', sync)
         self.assertNotIn('gh workflow run', sync)
 
 if __name__ == '__main__':
