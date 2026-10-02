@@ -221,9 +221,17 @@ RUN set -eux; \
 
 # Add Fedora bindings without replacing any image package.
 RUN set -eux; \
+    libdnf5_vra="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' libdnf5)"; \
+    bindings_nevra="python3-libdnf5-${libdnf5_vra}"; \
+    if ! dnf5 repoquery --available \
+      --queryformat '%{name}-%{version}-%{release}.%{arch}' \
+      "$bindings_nevra" | grep -Fxq "$bindings_nevra"; then \
+      echo "No python3-libdnf5 build matches installed libdnf5: ${libdnf5_vra}" >&2; \
+      exit 1; \
+    fi; \
     excludes="$(rpm -qa --qf '%{NAME}\n' | sort -u | paste -sd,)"; \
     rpm -qa --qf '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort > /tmp/rk-before; \
-    dnf5 -y --setopt=install_weak_deps=False --setopt="excludepkgs=$excludes" install python3-libdnf5; \
+    dnf5 -y --setopt=install_weak_deps=False --setopt="excludepkgs=$excludes" install "$bindings_nevra"; \
     rpm -qa --qf '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort > /tmp/rk-after; \
     test -z "$(comm -23 /tmp/rk-before /tmp/rk-after)"; \
     python3 -c 'import libdnf5; assert hasattr(libdnf5.base.Base, "lock_system_repo")'; \
