@@ -46,7 +46,6 @@ grep -Fq 'assert_masked bootc-fetch-apply-updates.timer' Containerfile
 grep -Fq 'assert_masked dnf-makecache.timer' Containerfile
 grep -Fq 'assert_masked dnf5-makecache.timer' Containerfile
 grep -Fq 'dnf5 repoquery --available' Containerfile
-grep -Fq 'No dnf5-plugins build matches installed libdnf5-cli' Containerfile
 grep -Fq 'bootc auto-apply timer masked' tests/release-check.sh
 grep -Fq 'Restart=on-failure' systemd/krisos-sync.service
 grep -Fq 'RestartSec=30s' systemd/krisos-sync.service

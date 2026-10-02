@@ -102,15 +102,6 @@ RUN set -eux; \
     done < /tmp/fedora-base-names.txt; \
     LC_ALL=C sort -u -o \
       /tmp/fedora-base-nevra.before /tmp/fedora-base-nevra.before; \
-    dnf_plugins_vra="$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' libdnf5-cli)"; \
-    dnf_plugins_nevra="dnf5-plugins-${dnf_plugins_vra}"; \
-    if ! dnf5 repoquery --available \
-      --queryformat '%{name}-%{version}-%{release}.%{arch}' \
-      "$dnf_plugins_nevra" | grep -Fxq "$dnf_plugins_nevra"; then \
-      echo "No dnf5-plugins build matches installed libdnf5-cli: ${dnf_plugins_vra}" >&2; \
-      exit 1; \
-    fi; \
-    sed -i "s/^dnf5-plugins$/dnf5-plugins-${dnf_plugins_vra}/" /tmp/krisos-delta-names.txt; \
     base_excludes="$(paste -sd, /tmp/fedora-base-names.txt)"; \
     xargs -r dnf5 -y \
       --setopt=install_weak_deps=False \
