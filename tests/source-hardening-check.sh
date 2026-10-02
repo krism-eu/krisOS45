@@ -6,7 +6,6 @@ cd "$root"
 bash -n systemd/krisos-overlay.sh
 bash -n tests/boot-check.sh
 bash -n tests/release-check.sh
-bash -n tests/run-release-vm.sh
 bash -n scripts/fetch-kriscc-component.sh
 bash -n scripts/repair-home-labels.sh
 bash -n scripts/check-initramfs-accounts.sh
@@ -49,13 +48,11 @@ grep -Fq 'assert_masked dnf5-makecache.timer' Containerfile
 grep -Fq 'dnf5 repoquery --available' Containerfile
 grep -Fq 'No dnf5-plugins build matches installed libdnf5-cli' Containerfile
 grep -Fq 'bootc auto-apply timer masked' tests/release-check.sh
-grep -Fq 'KRISOS_E2E_RK_PACKAGE' tests/run-release-vm.sh
-grep -Fq 'sudo /usr/bin/rk add' tests/run-release-vm.sh
-grep -Fq 'sudo /usr/bin/rk rm' tests/run-release-vm.sh
-grep -Fq 'StrictHostKeyChecking=yes' tests/run-release-vm.sh
 grep -Fq 'Restart=on-failure' systemd/krisos-sync.service
 grep -Fq 'RestartSec=30s' systemd/krisos-sync.service
 grep -Fq 'OnUnitInactiveSec=10min' systemd/krisos-sync.timer
+grep -Fq 'test -x /usr/bin/rfkill' tests/local-hardening-check.sh
+grep -Fq 'systemctl is-enabled krisos-bluetooth-firstboot.service' tests/local-hardening-check.sh
 ! grep -Fq 'systemctl enable NetworkManager-wait-online.service' Containerfile
 
 # SELinux/home contract is intentionally the original KrisOS45 implementation.
@@ -79,7 +76,6 @@ grep -Fq 'id-token: write' .github/workflows/publish-candidate.yml
 ! grep -Fq 'target="docker://ghcr.io/krism-eu/krisos45:m1"' .github/workflows/publish-candidate.yml
 grep -Fq 'environment: stable-promotion' .github/workflows/promote-m1.yml
 grep -Fq 'cosign verify' .github/workflows/promote-m1.yml
-! grep -Fq 'tests/run-release-vm.sh' .github/workflows/promote-m1.yml
 grep -Fq 'target="docker://ghcr.io/krism-eu/krisos45:m1"' .github/workflows/promote-m1.yml
 grep -Fq 'resolved_base="$(./scripts/resolve-base.sh)"' .github/workflows/sync-kriscc.yml
 grep -Fq -- '--build-arg "BASE_IMAGE=$resolved_base"' .github/workflows/sync-kriscc.yml

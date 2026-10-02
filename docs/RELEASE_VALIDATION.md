@@ -35,40 +35,29 @@ commit differente la sentinella deve essere assente sia dal merged `/usr` sia
 dal nuovo upper. In questo modo il test certifica direttamente il contratto
 principale di invalidazione M0/M1.
 
-## VM harness manuale
+## Validazione host manuale
 
-Il VM harness resta disponibile come validazione manuale separata; `promote-m1.yml` non lo esegue e non richiede secret `KRISOS_E2E_*`. Esempio:
+`tests/boot-check.sh` e `tests/release-check.sh` restano disponibili per controlli
+manuali su un sistema installato. `promote-m1.yml` non li esegue e non dipende da
+secret o connettività SSH verso una VM.
 
-```bash
-export KRISOS_E2E_TARGET=qa@192.0.2.10
-export KRISOS_E2E_SWITCH_IMAGE=ghcr.io/krism-eu/krisos45@sha256:<digest>
-export KRISOS_EXPECT_IMAGE="$KRISOS_E2E_SWITCH_IMAGE"
-export KRISOS_EXPECT_KRISCC=<version-release.fc45.x86_64>
-export KRISOS_EXPECT_ADMIN_USER=qa
-tests/run-release-vm.sh
-```
-
-La VM deve essere usa-e-getta e l'utente SSH deve avere sudo non interattivo.
-Se `KRISOS_E2E_SWITCH_IMAGE` non è impostata, il harness può provare il reboot
-sullo stesso deployment ma **non** soddisfa il gate di cambio deployment.
-
-Dopo lo switch il harness esegue `semodule -B`; il successivo release check deve
-ancora risolvere correttamente i context di `/var/home`. Questo verifica che il
-policy store persistente sotto `/var/lib/selinux` non renda fragile il fix al
-cambio immagine. Il harness arma inoltre un `pending` sintetico su VM usa-e-getta,
-riavvia e pretende che l'hook scarti l'upper, rimuova `pending`, completi il retry
-`needs-sync` e faccia sparire la sentinella precedente.
+Il modo `check` verifica lo stato corrente. I modi `prepare-reboot`,
+`verify-reboot`, `prepare-switch`, `verify-switch`, `prepare-recovery` e
+`verify-recovery` mantengono le sentinelle e gli assert necessari per un drill
+manuale quando si vuole certificare reboot, cambio deployment o recovery reale.
+L'operatore coordina esplicitamente reboot/switch; non esiste più un orchestratore
+VM nel repository.
 
 ## Gate `rk`
 
 1. test sorgente/policy;
 2. container Fedora con solver reale, firme, install/remove e no-op transaction;
-3. qcow2 fresca con `rk plan`, `rk add`, reboot e rpmdb/upper persistenti;
-4. cambio deployment, wipe dell'upper e recovery da transazione interrotta.
+3. controlli manuali opzionali su host installato per reboot/persistenza;
+4. drill manuale opzionale di cambio deployment e recovery.
 
 Solo i gate realmente eseguiti possono essere dichiarati passati. Il container
-non prova boot, OverlayFS reale, reboot o recovery. I punti 3-4 appartengono alla
-validazione VM manuale e non bloccano `promote-m1.yml`.
+non prova boot, OverlayFS reale, reboot o recovery; i controlli host restano
+separati e non bloccano `promote-m1.yml`.
 
 ## Provenance del build
 
@@ -111,8 +100,8 @@ percorso runtime da verificare esplicitamente.
 
 `promote-m1.yml` serializza le promotion con una concurrency dedicata e usa
 l'environment `stable-promotion`. La promotion verifica il digest firmato e la
-workflow identity Cosign, quindi copia esattamente quel digest sul tag `m1`; non
-esegue il VM harness. **Prerequisito operativo della release:** configurare in
+workflow identity Cosign, quindi copia esattamente quel digest sul tag `m1`.
+**Prerequisito operativo della release:** configurare in
 GitHub Settings almeno un required reviewer per quell'environment; la
 dichiarazione YAML da sola non crea una policy di approvazione. La checklist di
 promotion deve considerare non configurata questa protezione finché una run non

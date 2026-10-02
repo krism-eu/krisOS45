@@ -44,14 +44,14 @@ una pretesa di build bit-for-bit riproducibile.
 ## Stato dei gate
 
 La pipeline container F45 verifica sorgenti, build bootc, reale integrazione
-libdnf5/RPM, firma Cosign e pull immutabile. Il VM harness resta una validazione
-manuale separata, non un gate di `promote-m1.yml`: può verificare reboot sullo
-stesso deployment, cambio deployment con wipe reale dell'upper, recovery di una
-transazione interrotta e controllo SELinux dopo `semodule -B`.
+libdnf5/RPM, firma Cosign e pull immutabile. I controlli su host installato restano
+manuali e separati, non un gate di `promote-m1.yml`: `release-check.sh` conserva
+le verifiche di reboot sullo stesso deployment, cambio deployment con wipe reale
+dell'upper e recovery di una transazione interrotta.
 
-Il test VM usa una sentinella sotto `/usr/share/krisos-e2e` e verifica la
-corrispondente copia fisica in `/var/lib/krisos/upper`, evitando `/usr/local` e
-qualunque possibile redirezione verso `/var`.
+Le sentinelle di `release-check.sh` vivono sotto `/usr/share/krisos-e2e` e
+verificano la corrispondente copia fisica in `/var/lib/krisos/upper`, evitando
+`/usr/local` e qualunque possibile redirezione verso `/var`.
 
 ## krisCC temporaneo
 

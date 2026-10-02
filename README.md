@@ -72,7 +72,7 @@ ricostruzione già richiesta da `needs-sync`.
 
 ## Cadenza immagini
 
-Durante Fedora 45 Branched una build automatica giornaliera segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue i gate e, sul percorso di pubblicazione, produce e firma un candidate immutabile. Il tag mobile `ghcr.io/krism-eu/krisos45:m1` non viene aggiornato automaticamente: avanza solo tramite `promote-m1.yml`, dopo autorizzazione dell'environment protetto e verifica Cosign del digest firmato. Il VM harness resta disponibile come validazione manuale separata e non è un gate automatico di `promote-m1.yml`. Il sistema installato non si aggiorna da solo: `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e l'utente decide quando eseguire l'update. Dopo Fedora 45 stable la build candidate passa a cadenza settimanale.
+Durante Fedora 45 Branched una build automatica ogni due giorni segue la Minimal `:latest`. GitHub risolve `:latest` a un digest preciso, esegue i gate e, sul percorso di pubblicazione, produce e firma un candidate immutabile. Il tag mobile `ghcr.io/krism-eu/krisos45:m1` non viene aggiornato automaticamente: avanza solo tramite `promote-m1.yml`, dopo autorizzazione dell'environment protetto e verifica Cosign del digest firmato. I controlli su host installato restano manuali e separati dalla promotion. Il sistema installato non si aggiorna da solo: `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e l'utente decide quando eseguire l'update. Dopo Fedora 45 stable la build candidate passa a cadenza settimanale.
 
 `krisCC` non avvia automaticamente nuove build KrisOS: resta congelato nell'immagine finché la versione applicativa non viene dichiarata definitiva.
 
@@ -95,19 +95,15 @@ verifica il pull anonimo.
 
 Il componente image-owned è congelato su `krisCC 0.8.1-1.fc45` tramite `build_files/krisCC.lock`. L'RPM release è integrità-pinned per SHA-256 e installato con l'eccezione locale `rpm --nosignature`; questa eccezione non modifica la policy di firma di DNF/`rk`.
 
-## Validazione VM
+## Validazione host manuale
 
-I container non certificano OverlayFS reale, reboot o recovery. La validazione VM manuale usa
-`tests/run-release-vm.sh`; non viene invocata dalla promotion automatica di `m1`. Con `KRISOS_E2E_SWITCH_IMAGE` impostato verifica sia
-la persistenza sullo stesso deployment sia l'invalidazione su cambio deployment:
-la sentinella viene scritta sotto `/usr/share/krisos-e2e` e deve esistere anche
-fisicamente in `/var/lib/krisos/upper`; dopo `bootc switch` deve sparire da
-entrambi. Il test confronta inoltre l'identità derivata dal bootlink con
-`bootc status --format json --format-version 1` e con il file `deployment`.
-
-Dopo uno switch il harness ricostruisce anche il policy store SELinux con
-`semodule -B`; i successivi controlli `matchpathcon` assicurano che il contratto
-`/var/home` sopravviva all'upgrade.
+I container non certificano OverlayFS reale, reboot o recovery. `tests/boot-check.sh`
+e `tests/release-check.sh` restano strumenti manuali per controllare un sistema
+installato; non sono invocati dalla promotion automatica di `m1`. `release-check.sh`
+conserva i modi prepare/verify per verificare, quando serve, persistenza sullo
+stesso deployment, invalidazione dopo un cambio deployment e recovery da una
+transazione interrotta. L'orchestrazione SSH/VM dedicata è stata rimossa perché
+non faceva più parte del percorso di release.
 
 Vedi `docs/RELEASE_VALIDATION.md` e `docs/RK.md` per i gate completi.
 
@@ -155,7 +151,6 @@ Vedi `docs/RELEASE_VALIDATION.md` e `docs/RK.md` per i gate completi.
 │   ├── boot-check.sh
 │   ├── release-check.sh
 │   ├── release-state.py
-│   ├── run-release-vm.sh
 │   ├── test_overlay_identity.py
 │   ├── test_overlay_recovery.py
 │   ├── test_release_shell.py
