@@ -39,6 +39,13 @@ test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontain
 test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')" = 'https://github.com/krism-eu/krisOS45'
 test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$source_revision"
 
+say 'Bluetooth first-boot invariant'
+podman run --rm --entrypoint /usr/bin/bash "$tag" -lc '
+  set -euo pipefail
+  test -x /usr/bin/rfkill
+  systemctl is-enabled krisos-bluetooth-firstboot.service | grep -qx enabled
+'
+
 say 'Regression suite dentro la stessa immagine'
 podman run --rm --security-opt label=disable \
     -v "$root:/src:ro" -w /src --entrypoint /usr/bin/bash "$tag" -lc '

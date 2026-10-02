@@ -85,8 +85,8 @@ effetti persistenti o di boot fuori dall'upper, tra cui:
 
 I trigger appartenenti a pacchetti Fedora già installati possono comunque
 reagire a una transazione RPM; per questo il modello non promette compatibilità
-con RPM desktop arbitrari. Il VM harness resta raccomandato per validare questi
-effetti su un sistema reale, ma non è un gate automatico di `promote-m1.yml`.
+con RPM desktop arbitrari. I controlli manuali su un host installato restano il
+modo corretto per osservare questi effetti fuori dal container.
 
 ## Recovery
 
@@ -131,7 +131,7 @@ versionato, non analizzare il testo human-readable.
 1. source policy tests;
 2. disposable Fedora container con libdnf5/RPM reali, incluse install/remove e
    transazione no-op;
-3. qcow2 fresca con reboot e persistenza reale dell'upper/rpmdb;
-4. cambio deployment con wipe dell'upper e recovery di transazione interrotta.
+3. controlli manuali opzionali su host installato per reboot/persistenza;
+4. drill manuale opzionale di cambio deployment e recovery.
 
 Solo i gate effettivamente eseguiti possono essere riportati come passati.

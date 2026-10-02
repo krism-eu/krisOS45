@@ -44,21 +44,22 @@ una pretesa di build bit-for-bit riproducibile.
 ## Stato dei gate
 
 La pipeline container F45 verifica sorgenti, build bootc, reale integrazione
-libdnf5/RPM, firma Cosign e pull immutabile. Il VM harness resta una validazione
-manuale separata, non un gate di `promote-m1.yml`: può verificare reboot sullo
-stesso deployment, cambio deployment con wipe reale dell'upper, recovery di una
-transazione interrotta e controllo SELinux dopo `semodule -B`.
+libdnf5/RPM, firma Cosign e pull immutabile. I controlli su host installato restano
+manuali e separati, non un gate di `promote-m1.yml`: `release-check.sh` conserva
+le verifiche di reboot sullo stesso deployment, cambio deployment con wipe reale
+dell'upper e recovery di una transazione interrotta.
 
-Il test VM usa una sentinella sotto `/usr/share/krisos-e2e` e verifica la
-corrispondente copia fisica in `/var/lib/krisos/upper`, evitando `/usr/local` e
-qualunque possibile redirezione verso `/var`.
+Le sentinelle di `release-check.sh` vivono sotto `/usr/share/krisos-e2e` e
+verificano la corrispondente copia fisica in `/var/lib/krisos/upper`, evitando
+`/usr/local` e qualunque possibile redirezione verso `/var`.
 
 ## krisCC temporaneo
 
-Il payload congela `krisCC 0.8.1-1.fc45.x86_64`, bloccato dal
-lock SHA-256. Fedora 45/RPM 6 richiede la verifica firma per default e l'asset
-custom non è firmato, quindi il Containerfile mantiene una singola eccezione
-`--nosignature` limitata a quel file dopo il controllo del lock.
+La release image-owned di krisCC è definita esclusivamente da
+`build_files/krisCC.lock`, che contiene tag, nome dell'RPM e SHA-256. Fedora
+45/RPM 6 richiede la verifica firma per default e l'asset custom non è firmato,
+quindi il Containerfile mantiene una singola eccezione `--nosignature` limitata
+a quel file dopo il controllo del lock.
 
 Questa è una compatibilità temporanea limitata alla firma dell'asset custom:
 il componente è già un RPM Fedora 45. Quando krisCC verrà dichiarato definitivo,

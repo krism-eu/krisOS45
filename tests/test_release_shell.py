@@ -1,8 +1,7 @@
 #!/usr/bin/python3
-"""Execute the shell paths that previously lost home/admin arguments."""
+"""Regression tests for release and build shell paths."""
 from pathlib import Path
 import os
-import re
 import shlex
 import subprocess
 import tempfile
@@ -22,23 +21,6 @@ class ReleaseShell(unittest.TestCase):
             result = subprocess.run(['bash', '-c', script], env={**os.environ, 'PATH': directory + ':' + os.environ['PATH']}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_vm_harness_transmits_admin_user(self):
-        source = (ROOT / 'tests/run-release-vm.sh').read_text()
-        function = re.search(r'run_release_check\(\) \{.*?\n\}', source, re.S).group()
-        script = '''ssh() { printf '%s\\n' "$@"; }
-ssh_opts=()
-target=qa@example
-expected_kriscc=version
-expected_image=image
-expected_admin_user=desktop
-token=token
-remote_dir=/tmp/qa
-''' + function + '\nrun_release_check check\n'
-        result = subprocess.run(['bash', '-c', script], capture_output=True, text=True, check=True)
-        self.assertIn("KRISOS_EXPECT_ADMIN_USER='desktop'", result.stdout)
-        self.assertIn("KRISOS_E2E_PREVIOUS_DEPLOYMENT=''", result.stdout)
-
-
     def test_boot_check_deployment_crosscheck_has_no_literal_backslash_n_command(self):
         source = (ROOT / 'tests/boot-check.sh').read_text()
         self.assertNotIn('status" \n        "python3', source)
@@ -50,19 +32,6 @@ remote_dir=/tmp/qa
         self.assertIn('/var/lib/krisos/upper/share/krisos-e2e/', source)
         self.assertNotIn('/usr/local/share/.krisos-release-e2e', source)
         self.assertIn('sync -f "$upper_sentinel"', source)
-
-    def test_vm_harness_tests_switch_before_same_deployment_reboot(self):
-        source = (ROOT / 'tests/run-release-vm.sh').read_text()
-        prepare = source.index('run_release_check prepare-switch')
-        switch = source.index('sudo bootc switch')
-        verify = source.index('run_release_check verify-switch')
-        same_reboot = source.index('run_release_check prepare-reboot')
-        recovery = source.index('run_release_check prepare-recovery')
-        self.assertLess(prepare, switch)
-        self.assertLess(switch, verify)
-        self.assertLess(verify, same_reboot)
-        self.assertLess(same_reboot, recovery)
-
 
     @staticmethod
     def workflow_run_block(workflow, step_name):
@@ -156,6 +125,7 @@ esac
         promote = (ROOT / '.github/workflows/promote-m1.yml').read_text()
         sync = (ROOT / '.github/workflows/sync-kriscc.yml').read_text()
 
+        self.assertIn('permissions:\n  contents: read', build)
         self.assertIn('group: validate-m1-${{ github.ref }}', build)
         self.assertNotIn('packages: write', build)
         self.assertNotIn('id-token: write', build)
@@ -170,27 +140,14 @@ esac
 
         self.assertIn('environment: stable-promotion', promote)
         self.assertIn('cosign verify', promote)
-        self.assertNotIn('tests/run-release-vm.sh', promote)
         self.assertIn('target="docker://ghcr.io/krism-eu/krisos45:m1"', promote)
         self.assertLess(promote.index('cosign verify'), promote.index('target="docker://ghcr.io/krism-eu/krisos45:m1"'))
 
         self.assertIn('pull-requests: write', sync)
+        self.assertIn('resolved_base="$(./scripts/resolve-base.sh)"', sync)
+        self.assertIn('--build-arg "BASE_IMAGE=$resolved_base"', sync)
+        self.assertIn('sudo apt-get install -y podman skopeo', sync)
         self.assertNotIn('gh workflow run', sync)
-
-    def test_vm_gate_contains_real_rk_add_remove_and_reboot_persistence(self):
-        source = (ROOT / 'tests/run-release-vm.sh').read_text()
-        add = source.index('sudo /usr/bin/rk add')
-        switch = source.index('sudo bootc switch')
-        candidate_add = source.index('rk_add_fixture', source.index('verify_rk_package_present', switch))
-        reboot = source.index('run_release_check prepare-reboot')
-        remove = source.index('rk_remove_fixture', reboot)
-        verify_absent = source.index('verify_rk_package_absent', remove)
-        self.assertLess(add, switch)
-        self.assertLess(switch, candidate_add)
-        self.assertLess(candidate_add, reboot)
-        self.assertLess(reboot, remove)
-        self.assertLess(remove, verify_absent)
-
 
 if __name__ == '__main__':
     unittest.main()

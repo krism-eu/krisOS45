@@ -168,7 +168,7 @@ case "$mode" in
         ;;
     prepare-recovery)
         prepare_overlay_sentinel
-        printf '%s\n' 'Simulated interrupted transaction for disposable VM recovery gate' > /var/lib/krisos/pending
+        printf '%s\n' 'Simulated interrupted transaction for manual recovery drill' > /var/lib/krisos/pending
         chmod 0600 /var/lib/krisos/pending
         sync -f /var/lib/krisos/pending
         pass "pending recovery marker armed"

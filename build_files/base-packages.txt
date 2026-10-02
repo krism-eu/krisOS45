@@ -68,6 +68,7 @@ plasma-systemmonitor
 kde-partitionmanager
 kfind
 qdirstat
+backintime-qt
 
 # Network firewall. Fedora 45's plasma-firewall package currently pulls both
 # backend plugins; KrisOS deliberately enables firewalld only. firewalld

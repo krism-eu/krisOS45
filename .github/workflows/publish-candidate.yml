@@ -42,12 +42,11 @@ jobs:
           podman version
           skopeo --version
 
-      - name: Build exact source bundle
+      - name: Build exact source snapshot
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/source
-          zip="KrisOS-${GITHUB_SHA}-source.zip"
           txt="KrisOS-${GITHUB_SHA}-source.txt"
           python3 tools/source_snapshot.py \
             --repository krism-eu/krisOS45 \
@@ -55,9 +54,7 @@ jobs:
             --display-ref "${GITHUB_REF_NAME}" \
             --version '0.1.0-m1' \
             --output "artifacts/source/$txt"
-          git archive --format=zip --prefix="KrisOS-${GITHUB_SHA}/" \
-            --output="artifacts/source/$zip" "$GITHUB_SHA"
-          (cd artifacts/source && sha256sum "$zip" "$txt" > SHA256SUMS && sha256sum -c SHA256SUMS)
+          (cd artifacts/source && sha256sum "$txt" > SHA256SUMS && sha256sum -c SHA256SUMS)
 
       - name: Run the shared local/CI hardening gate
         env:
