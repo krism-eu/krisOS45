@@ -97,10 +97,11 @@ jobs:
           remote_digest="sha256:$(sha256sum main-manifest.json | awk '{print $1}')"
           test "$remote_digest" = "$KRISOS_DIGEST"
           printf '%s\n' "$remote_digest" > main-payload.digest
-          skopeo inspect --authfile "$authfile" "docker://$KRISOS_TARGET_REF" >/dev/null
+          target_digest="$(skopeo inspect --authfile "$authfile" --format '{{.Digest}}' "docker://$KRISOS_TARGET_REF")"
+          test "$target_digest" = "$KRISOS_DIGEST"
 
           cosign verify \
-            --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/build-m1.yml@refs/heads/main' \
+            --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/publish-candidate.yml@refs/heads/main' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "ghcr.io/krism-eu/krisos45@$KRISOS_DIGEST" 2>&1 | tee main-cosign-verify.log
 
