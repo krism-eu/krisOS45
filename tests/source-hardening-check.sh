@@ -45,7 +45,9 @@ grep -Fq "print('rk:', type(error).__name__, message, file=sys.stderr)" bin/rk
 grep -Fq 'assert_masked bootc-fetch-apply-updates.timer' Containerfile
 grep -Fq 'assert_masked dnf-makecache.timer' Containerfile
 grep -Fq 'assert_masked dnf5-makecache.timer' Containerfile
-grep -Fq 'dnf5 repoquery --available' Containerfile
+grep -Fq -- '--setopt="excludepkgs=$excludes" install python3-libdnf5' Containerfile
+grep -Fq 'test -z "$(comm -23 /tmp/rk-before /tmp/rk-after)"' Containerfile
+grep -Fq 'assert hasattr(libdnf5.base.Base, "lock_system_repo")' Containerfile
 grep -Fq 'bootc auto-apply timer masked' tests/release-check.sh
 grep -Fq 'Restart=on-failure' systemd/krisos-sync.service
 grep -Fq 'RestartSec=30s' systemd/krisos-sync.service
