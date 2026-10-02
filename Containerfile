@@ -376,8 +376,8 @@ RUN set -eux; \
     systemctl disable ufw.service || true; \
     systemctl set-default graphical.target
 
-# Static image invariants. Runtime overlay persistence is intentionally left to
-# the M1 VM smoke test; a green container build cannot prove it.
+# Static image invariants. Runtime overlay persistence requires a real installed
+# host and remains part of the separate manual host-validation path.
 RUN set -eux; \
     assert_absent() { \
       if rpm -q "$1" >/dev/null 2>&1; then \

@@ -55,10 +55,11 @@ verificano la corrispondente copia fisica in `/var/lib/krisos/upper`, evitando
 
 ## krisCC temporaneo
 
-Il payload congela `krisCC 0.8.1-1.fc45.x86_64`, bloccato dal
-lock SHA-256. Fedora 45/RPM 6 richiede la verifica firma per default e l'asset
-custom non è firmato, quindi il Containerfile mantiene una singola eccezione
-`--nosignature` limitata a quel file dopo il controllo del lock.
+La release image-owned di krisCC è definita esclusivamente da
+`build_files/krisCC.lock`, che contiene tag, nome dell'RPM e SHA-256. Fedora
+45/RPM 6 richiede la verifica firma per default e l'asset custom non è firmato,
+quindi il Containerfile mantiene una singola eccezione `--nosignature` limitata
+a quel file dopo il controllo del lock.
 
 Questa è una compatibilità temporanea limitata alla firma dell'asset custom:
 il componente è già un RPM Fedora 45. Quando krisCC verrà dichiarato definitivo,

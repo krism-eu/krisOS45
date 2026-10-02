@@ -4,6 +4,5 @@ docs
 tests
 tools
 artifacts
-installer
 *.log
 *.zip
