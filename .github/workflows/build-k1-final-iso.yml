@@ -98,7 +98,11 @@ jobs:
           test "$remote_digest" = "$KRISOS_DIGEST"
           printf '%s\n' "$remote_digest" > main-payload.digest
           target_digest="$(skopeo inspect --authfile "$authfile" --format '{{.Digest}}' "docker://$KRISOS_TARGET_REF")"
-          test "$target_digest" = "$KRISOS_DIGEST"
+          if [[ "$target_digest" != "$KRISOS_DIGEST" ]]; then
+            echo 'ERROR: promote the locked signed payload to m1 before building this ISO.' >&2
+            printf 'Expected m1: %s\nActual m1:   %s\n' "$KRISOS_DIGEST" "$target_digest" >&2
+            exit 1
+          fi
 
           cosign verify \
             --certificate-identity 'https://github.com/krism-eu/krisOS45/.github/workflows/publish-candidate.yml@refs/heads/main' \
@@ -148,10 +152,10 @@ jobs:
           git fetch --no-tags origin "$KRISOS_COMMIT"
           rm -rf main-qa
           mkdir -p main-qa
-          for path in tests/boot-check.sh tests/release-check.sh tests/release-state.py tests/run-release-vm.sh; do
+          for path in tests/boot-check.sh tests/release-check.sh tests/release-state.py; do
             git show "$KRISOS_COMMIT:$path" > "main-qa/$(basename "$path")"
           done
-          chmod 0755 main-qa/boot-check.sh main-qa/release-check.sh main-qa/release-state.py main-qa/run-release-vm.sh
+          chmod 0755 main-qa/boot-check.sh main-qa/release-check.sh main-qa/release-state.py
           grep -Fq '/usr/bin/rk status --json' main-qa/release-check.sh
 
       - name: Validate interactive installer runtime

@@ -1,19 +1,21 @@
 # KrisOS K1 ISO validation
 
 The ISO branch validates only the **installation path**. Runtime correctness is
-owned by `k1.0-final-payload`.
+owned by `main`.
 
 ## Locked payload
 
 The workflow reads `build_files/KrisOS-payload.lock` and requires the exact
 Fedora 45 payload commit, immutable registry reference, manifest digest and expected krisCC
-EVRA. It verifies the registry manifest and the KrisOS45 payload Build M1 Cosign identity,
+EVRA. It verifies the registry manifest and the
+`publish-candidate.yml@refs/heads/main` Cosign identity,
 pulls by digest, checks the OCI revision label and inspects the payload before
 building the installer.
 
-The current lock is payload commit `650786a97209bed438a29d5c4a42c7344ca1842d`,
-manifest `sha256:08f98504645b99a5d685b67ebe4d1a6f14ece9dd7799a0daf7315baf57782581`,
-with krisCC `0.7.9-1.fc44.x86_64`.
+The exact payload identity is recorded in `build_files/KrisOS-payload.lock`.
+Validation evidence and outstanding host acceptance are recorded in
+`docs/K1_STABLE_BACKUP.md`. The locked digest must be promoted to `m1` before
+the ISO build; the workflow rejects a different update-channel digest.
 
 ## Installer contract
 
@@ -29,7 +31,7 @@ Validation layout:
 - EFI System Partition -> `/boot/efi` (vfat)
 - dedicated ext4 -> `/boot`
 - dedicated ext4 -> `/`
-- dedicated ext4 -> `/var/home`
+- dedicated ext4 -> `/home` in Anaconda (persistent `/var/home` in the payload)
 - no disk swap partition; KrisOS uses zram
 
 Create the desktop user manually and enable Anaconda's administrator option.
@@ -42,7 +44,9 @@ locked payload commit, not copied from the installer branch:
 - `boot-check.sh`
 - `release-check.sh`
 - `release-state.py`
-- `run-release-vm.sh`
+
+There is no VM orchestrator in the current payload. Host checks and reboot,
+switch and recovery drills are coordinated manually.
 
 After installation set the expected immutable Fedora 45 payload reference, expected krisCC
 EVRA and admin user, then run `release-check.sh` followed by its reboot

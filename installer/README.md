@@ -6,7 +6,7 @@ This directory contains the final-candidate installer path for KrisOS45.
 
 - Fedora 45 Anaconda runtime pinned to 45.27-1.fc45, independent from the installed KrisOS payload.
 - `bootc-generic-iso`, not the legacy `anaconda-iso` path.
-- Embed the exact hardware-validated KrisOS45 payload while recording `m1` as the installed system's manual update channel.
+- Embed the exact signed KrisOS45 payload while recording `m1` as the installed system's manual update channel; hardware acceptance is recorded separately.
 - Keep Anaconda storage and user setup interactive and non-destructive.
 - Use a physically separate ext4 home partition assigned to the logical `/home` mount point in Anaconda.
 - Keep the payload's OSTree/bootc model intact: `/home` resolves to persistent `/var/home`; Anaconda must not mount the separate home filesystem directly at `/var/home`.
@@ -16,10 +16,10 @@ This directory contains the final-candidate installer path for KrisOS45.
 
 `build_files/KrisOS-payload.lock` separates the exact install source from the future update channel:
 
-- `KRISOS_SOURCE_REF` is the immutable successful build tag whose digest was validated on hardware;
+- `KRISOS_SOURCE_REF` is the immutable successful build tag; see `docs/K1_STABLE_BACKUP.md` for hardware acceptance status;
 - `KRISOS_DIGEST` pins that source content exactly;
 - `KRISOS_TARGET_REF` is `ghcr.io/krism-eu/krisos45:m1`, recorded in the installed system for user-triggered future updates;
-- the ISO workflow verifies the payload's Cosign identity against `build-m1.yml@refs/heads/main`.
+- the ISO workflow verifies the payload's Cosign identity against `publish-candidate.yml@refs/heads/main` and requires `m1` to match the locked digest.
 
 The ISO never rebuilds KrisOS itself.
 

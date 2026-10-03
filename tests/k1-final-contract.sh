@@ -2,11 +2,11 @@
 set -euo pipefail
 
 source build_files/KrisOS-payload.lock
-test "$KRISOS_COMMIT" = "2e07f3528b5aa3011f5826ce524029ec60e7f63e"
-test "$KRISOS_SOURCE_REF" = "ghcr.io/krism-eu/krisos45:build-36909460134-1"
+test "$KRISOS_COMMIT" = "dd2237d95e9d0e4fc3d58c72cb589245a6241ee6"
+test "$KRISOS_SOURCE_REF" = "ghcr.io/krism-eu/krisos45:build-37122693739-1"
 test "$KRISOS_TARGET_REF" = "ghcr.io/krism-eu/krisos45:m1"
-test "$KRISOS_DIGEST" = "sha256:995957957b589019cdb536f1f2b67ef443e1023c5911277965d1fbba2c96345f"
-test "$KRISOS_KRISCC" = "0.8.1-1.fc45.x86_64"
+test "$KRISOS_DIGEST" = "sha256:edacc9d403ece4d6f5aa50326a1051b94da5234c198be0504913bf57dc0e4a5c"
+test "$KRISOS_KRISCC" = "0.8.2-1.fc45.x86_64"
 
 # Installer branch only: runtime source remains on main.
 test ! -e Containerfile
@@ -58,6 +58,11 @@ grep -Fq 'chroot "$sysroot" /usr/bin/bootc internals fixup-etc-fstab' installer/
 
 # Payload owns the internal /var/home model and SELinux policy.
 git fetch --no-tags origin "$KRISOS_COMMIT"
+for path in tests/boot-check.sh tests/release-check.sh tests/release-state.py; do
+  git cat-file -e "$KRISOS_COMMIT:$path"
+done
+payload_rpm="$(git show "$KRISOS_COMMIT:build_files/krisCC.lock" | sed -n 's/^KRISCC_RPM=//p')"
+test "$payload_rpm" = "krisCC-${KRISOS_KRISCC}.rpm"
 main_container="$(mktemp)"
 trap 'rm -f "$main_container"' EXIT
 git show "$KRISOS_COMMIT:Containerfile" > "$main_container"
