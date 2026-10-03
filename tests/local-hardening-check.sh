@@ -39,11 +39,14 @@ test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontain
 test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')" = 'https://github.com/krism-eu/krisOS45'
 test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$source_revision"
 
-say 'Bluetooth first-boot invariant'
+say 'Desktop startup policy invariants'
 podman run --rm --entrypoint /usr/bin/bash "$tag" -lc '
   set -euo pipefail
-  test -x /usr/bin/rfkill
-  systemctl is-enabled krisos-bluetooth-firstboot.service | grep -qx enabled
+  grep -Fxq "AutoEnable=false" /etc/bluetooth/main.conf
+  test ! -e /usr/lib/systemd/system/krisos-bluetooth-firstboot.service
+  test ! -e /etc/xdg/autostart/backintime.desktop
+  test -f /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
+  grep -Fxq "Environment=LANG=it_IT.UTF-8" /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
 '
 
 say 'Regression suite dentro la stessa immagine'
