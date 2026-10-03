@@ -145,8 +145,12 @@ breeze-icon-theme
 kf6-breeze-icons
 breeze-cursor-theme
 
-# Locales: English + Italian only; never glibc-all-langpacks.
+# Locales and spell checking: English + Italian only; never glibc-all-langpacks.
+# kf6-sonnet-hunspell is the small KDE/Sonnet backend used by Kate/Discover;
+# hunspell-it supplies the it_IT dictionary also used by Plasma Keyboard.
 glibc-langpack-en
 glibc-langpack-it
 langpacks-core-en
 langpacks-core-it
+kf6-sonnet-hunspell
+hunspell-it
