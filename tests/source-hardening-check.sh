@@ -49,8 +49,11 @@ grep -Fq 'bootc auto-apply timer masked' tests/release-check.sh
 grep -Fq 'Restart=on-failure' systemd/krisos-sync.service
 grep -Fq 'RestartSec=30s' systemd/krisos-sync.service
 grep -Fq 'OnUnitInactiveSec=10min' systemd/krisos-sync.timer
-grep -Fq 'test -x /usr/bin/rfkill' tests/local-hardening-check.sh
-grep -Fq 'systemctl is-enabled krisos-bluetooth-firstboot.service' tests/local-hardening-check.sh
+grep -Fq "sed -i 's/^#AutoEnable=true$/AutoEnable=false/' /etc/bluetooth/main.conf" Containerfile
+grep -Fq 'rm -f /etc/xdg/autostart/backintime.desktop' Containerfile
+grep -Fq 'Environment=LANG=it_IT.UTF-8' Containerfile
+test ! -e systemd/krisos-bluetooth-firstboot.service
+! grep -Fq 'systemctl enable krisos-bluetooth-firstboot.service' Containerfile
 ! grep -Fq 'systemctl enable NetworkManager-wait-online.service' Containerfile
 
 # SELinux/home contract is intentionally the original KrisOS45 implementation.
