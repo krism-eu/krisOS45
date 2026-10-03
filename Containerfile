@@ -223,7 +223,6 @@ COPY bin/rk /usr/bin/rk
 RUN chmod 0755 /usr/bin/rk
 COPY systemd/krisos-sync.service /usr/lib/systemd/system/krisos-sync.service
 COPY systemd/krisos-sync.timer /usr/lib/systemd/system/krisos-sync.timer
-COPY systemd/krisos-bluetooth-firstboot.service /usr/lib/systemd/system/krisos-bluetooth-firstboot.service
 
 # Persistent /usr overlay. Mount it in early real-root userspace rather than in
 # initrd: OSTree has already exposed writable /var, while local-fs.target still
@@ -354,16 +353,19 @@ COPY build_files/NetworkManager.state /usr/share/factory/var/lib/NetworkManager/
 
 RUN set -eux; \
     printf '%s\n' 'LANG=it_IT.UTF-8' > /etc/locale.conf; \
+    install -d -m 0755 /usr/lib/systemd/system/plasmalogin.service.d; \
+    printf '%s\n' '[Service]' 'Environment=LANG=it_IT.UTF-8' > /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf; \
     test -f /etc/bluetooth/main.conf; \
     sed -i 's/^#AutoEnable=true$/AutoEnable=false/' /etc/bluetooth/main.conf; \
     grep -Fxq 'AutoEnable=false' /etc/bluetooth/main.conf; \
+    rm -f /etc/xdg/autostart/backintime.desktop; \
+    test ! -e /etc/xdg/autostart/backintime.desktop; \
     test -f /etc/xdg/autostart/geoclue-demo-agent.desktop; \
     grep -Fxq 'Hidden=true' /etc/xdg/autostart/geoclue-demo-agent.desktop || printf '\nHidden=true\n' >> /etc/xdg/autostart/geoclue-demo-agent.desktop; \
     firewall-offline-cmd --zone=public --remove-service-from-zone=ssh; \
     firewall-offline-cmd --zone=public --remove-service-from-zone=mdns; \
     systemctl enable krisos-overlay.service; \
     systemctl enable krisos-sync.timer; \
-    systemctl enable krisos-bluetooth-firstboot.service; \
     systemctl enable --force plasmalogin.service; \
     systemctl enable firewalld.service; \
     systemctl enable systemd-timesyncd.service; \
@@ -452,7 +454,10 @@ RUN set -eux; \
     test -f /usr/lib/systemd/system/krisos-overlay.service; \
     test -f /usr/lib/systemd/system/krisos-sync.service; \
     test -f /usr/lib/systemd/system/krisos-sync.timer; \
+    test ! -e /usr/lib/systemd/system/krisos-bluetooth-firstboot.service; \
     test -e /usr/lib/systemd/system/plasmalogin.service; \
+    test -f /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf; \
+    grep -Fxq 'Environment=LANG=it_IT.UTF-8' /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf; \
     test -s /usr/share/krisos/owned-packages.txt; \
     grep -Fxq krisCC /usr/share/krisos/owned-packages.txt; \
     assert_not_in_file gpg-pubkey /usr/share/krisos/owned-packages.txt; \
@@ -475,6 +480,7 @@ RUN set -eux; \
     grep -Fxq 'fs.protected_fifos = 2' /usr/lib/sysctl.d/55-krisos-hardening.conf; \
     grep -Fxq 'fs.suid_dumpable = 0' /usr/lib/sysctl.d/55-krisos-hardening.conf; \
     grep -Fxq 'AutoEnable=false' /etc/bluetooth/main.conf; \
+    test ! -e /etc/xdg/autostart/backintime.desktop; \
     grep -Fxq 'Hidden=true' /etc/xdg/autostart/geoclue-demo-agent.desktop; \
     test -f /etc/dnf/repos.override.d/90-krisos-privacy.repo; \
     grep -Fxq '[*]' /etc/dnf/repos.override.d/90-krisos-privacy.repo; \
