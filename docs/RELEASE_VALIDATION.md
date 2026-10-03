@@ -80,10 +80,17 @@ review deve stabilire se la deriva è attesa.
 
 ## Adozione krisCC
 
-`sync-kriscc.yml` accetta un tag release `vX.Y.Z` (per esempio `v0.8.2`), valida
+`sync-kriscc.yml` accetta un tag release stabile pubblicata `vX.Y.Z` (per esempio `v0.8.2`), valida
 il candidato in una build KrisOS45 e apre una PR che modifica il lock. Non pusha
 più direttamente su `main`. Il merge deliberato della PR avvia il
 normale workflow della branch release.
+
+Se la policy GitHub vieta ad Actions di creare PR, la validazione conserva la
+branch pronta e mostra nel riepilogo il link per aprire manualmente la PR.
+Questo caso produce un avviso esplicito, non un falso errore di build; ogni
+altro errore nell'apertura della PR resta bloccante. Per automatizzare anche
+l'apertura, abilitare nelle impostazioni Actions del repository
+`Allow GitHub Actions to create and approve pull requests`.
 
 Il payload Fedora 45 usa soltanto l'artefatto `fc45`; alla stable F45 definitiva
 deve adottare un build `fc45` con una trust chain più forte e rimuovere

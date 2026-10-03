@@ -119,6 +119,52 @@ esac
             self.assertIn('-base', (directory / 'package-drift.txt').read_text())
             self.assertFalse(any(directory.glob('krisos-ghcr-auth.*')))
 
+    def test_adoption_pr_policy_fallback_keeps_other_errors_fatal(self):
+        block = self.workflow_run_block('.github/workflows/sync-kriscc.yml', 'Open reviewed component adoption PR')
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            git = directory / 'git'
+            git.write_text('''#!/bin/sh
+case "$1" in
+  rev-parse) printf '%s\\n' "$BASE_SHA" ;;
+  diff) exit 1 ;;
+  *) exit 0 ;;
+esac
+''')
+            gh = directory / 'gh'
+            gh.write_text('''#!/bin/sh
+case "$PR_TEST_MODE" in
+  success) printf '%s\\n' 'https://github.com/example/krisos/pull/1' ;;
+  policy) echo 'GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)' >&2; exit 1 ;;
+  network) echo 'connection refused' >&2; exit 1 ;;
+esac
+''')
+            git.chmod(0o755)
+            gh.chmod(0o755)
+            for mode in ('success', 'policy', 'network'):
+                with self.subTest(mode=mode):
+                    summary = directory / f'{mode}.md'
+                    result = subprocess.run(
+                        ['bash', '-c', block], cwd=directory,
+                        env={**os.environ, 'PATH': str(directory) + ':' + os.environ['PATH'],
+                             'BASE_SHA': 'a' * 40, 'KRISCC_TAG': 'v0.8.2', 'GITHUB_RUN_ID': '123',
+                             'GITHUB_REPOSITORY': 'example/krisos', 'GITHUB_STEP_SUMMARY': str(summary),
+                             'PR_TEST_MODE': mode},
+                        capture_output=True, text=True,
+                    )
+                    if mode == 'network':
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn('connection refused', result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        output = summary.read_text()
+                        if mode == 'policy':
+                            self.assertIn('main has not changed', output)
+                            self.assertIn('/compare/main...automation/kriscc-0.8.2-123?expand=1', output)
+                            self.assertNotIn('Opened adoption PR', output)
+                        else:
+                            self.assertIn('Opened adoption PR: https://github.com/example/krisos/pull/1', output)
+
     def test_workflow_release_permissions_and_serialization_contract(self):
         build = (ROOT / '.github/workflows/build-m1.yml').read_text()
         publish = (ROOT / '.github/workflows/publish-candidate.yml').read_text()

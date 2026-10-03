@@ -66,7 +66,12 @@ jobs:
             exit 0
           fi
 
-          gh release view "$REQUESTED_TAG" --repo krism-eu/krisCC >/dev/null
+          release_state="$(gh release view "$REQUESTED_TAG" --repo krism-eu/krisCC \
+            --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | any')"
+          test "$release_state" = 'false' || {
+            echo 'Only published stable krisCC releases can be adopted.' >&2
+            exit 1
+          }
 
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
@@ -196,13 +201,28 @@ jobs:
           git checkout -b "$branch"
           git commit -m "Propose validated krisCC ${KRISCC_TAG}"
           git push origin "HEAD:$branch"
-          pr_url="$(gh pr create \
+          pr_error="$(mktemp)"
+          trap 'rm -f "$pr_error"' EXIT
+          if pr_url="$(gh pr create \
             --repo "$GITHUB_REPOSITORY" \
             --base main \
             --head "$branch" \
             --title "Adopt validated krisCC ${KRISCC_TAG}" \
-            --body "Candidate ${KRISCC_TAG} passed the KrisOS45 container and rk integration gates in workflow run ${GITHUB_RUN_ID}. Merge deliberately to start the normal main build/publish path.")"
-          printf 'Opened adoption PR: %s\n' "$pr_url"
+            --body "Candidate ${KRISCC_TAG} passed the KrisOS45 container and rk integration gates in workflow run ${GITHUB_RUN_ID}. Merge deliberately to start the normal main build/publish path." \
+            2>"$pr_error")"; then
+            printf 'Opened adoption PR: %s\n' "$pr_url" | tee -a "$GITHUB_STEP_SUMMARY"
+          elif grep -Fq 'GitHub Actions is not permitted to create or approve pull requests' "$pr_error"; then
+            compare_url="https://github.com/$GITHUB_REPOSITORY/compare/main...$branch?expand=1"
+            echo '::warning::Candidate validated and branch pushed; repository policy requires opening the adoption PR manually.'
+            {
+              printf 'krisCC %s passed validation. The adoption branch is ready; main has not changed.\n\n' "$KRISCC_TAG"
+              printf 'Open the adoption PR manually: %s\n\n' "$compare_url"
+              printf 'For automatic PR creation, enable the repository Actions setting "Allow GitHub Actions to create and approve pull requests".\n'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            cat "$pr_error" >&2
+            exit 1
+          fi
 
       - name: Preserve candidate logs
         if: always() && steps.candidate.outputs.changed == 'true'
