@@ -38,11 +38,29 @@ if [[ "$mode" != "check" && "$mode" != "prepare-reboot" && "$mode" != "verify-re
     exit 2
 fi
 
-if bash "$script_dir/boot-check.sh"; then
-    pass "base boot checks"
-else
-    fail_check "base boot checks"
-fi
+boot_check_rc=0
+bash "$script_dir/boot-check.sh" || boot_check_rc=$?
+
+case "$boot_check_rc" in
+    0)
+        pass "base boot checks"
+        ;;
+    2)
+        # boot-check exit 2 means an intentional krisos.overlay=off
+        # recovery boot was verified successfully.
+        pass "base recovery boot checks"
+        if [[ "$mode" != "check" ]]; then
+            echo "$mode is unavailable while krisos.overlay=off is active; use check." >&2
+            exit 2
+        fi
+        echo
+        echo "KRISOS RECOVERY BOOT CHECKS PASSED"
+        exit 0
+        ;;
+    *)
+        fail_check "base boot checks"
+        ;;
+esac
 
 status_file="$(mktemp)"
 rk_file="$(mktemp)"

@@ -48,6 +48,33 @@ podman run --rm --entrypoint /usr/bin/bash "$tag" -lc '
   test ! -e /etc/xdg/autostart/backintime.desktop
   test -f /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
   grep -Fxq "Environment=LANG=it_IT.UTF-8" /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
+
+  # Final image hygiene: do not ship machine-specific/root runtime residue.
+  test ! -e /root/.ssh
+  test ! -e /root/.cache
+  test -z "$(find /var/tmp -mindepth 1 -print -quit 2>/dev/null)"
+  test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit 2>/dev/null)"
+
+  if [ -L /etc/machine-id ]; then
+    machine_id_target="$(readlink /etc/machine-id)"
+    case "$machine_id_target" in
+      /run/machine-id|../run/machine-id) ;;
+      *)
+        echo "Unexpected /etc/machine-id symlink: $machine_id_target" >&2
+        exit 1
+        ;;
+    esac
+  elif [ -e /etc/machine-id ]; then
+    machine_id="$(cat /etc/machine-id 2>/dev/null || true)"
+    case "$machine_id" in
+      ""|uninitialized) ;;
+      *)
+        echo "Initialized machine-id found in image" >&2
+        exit 1
+        ;;
+    esac
+  fi
+
   test -f /etc/tmpfiles.d/root.conf
   test ! -s /etc/tmpfiles.d/root.conf
   rpm -q kf6-sonnet-hunspell hunspell-it >/dev/null

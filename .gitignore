@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 build_files/krisCC/
+build.log
+fedora45-base.txt
+rk-integration.log

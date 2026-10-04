@@ -572,8 +572,10 @@ RUN set -eux; \
 COPY build_files/60-krisos-runtime-state.conf /usr/lib/tmpfiles.d/60-krisos-runtime-state.conf
 
 RUN set -eux; \
-    find /run /tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true; \
+    find /run /tmp /var/tmp -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true; \
     rm -rf \
+      /root/.ssh \
+      /root/.cache \
       /var/cache/fwupd \
       /var/cache/libdnf5 \
       /var/cache/libX11 \
@@ -598,5 +600,25 @@ RUN set -eux; \
       /var/log/dnf5.log \
       /var/log/dnf5.log.* \
       /var/cache/ldconfig/aux-cache; \
+    if [ -d /etc/ssh ]; then \
+      find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -delete; \
+    fi; \
+    test ! -e /root/.ssh; \
+    test ! -e /root/.cache; \
+    test -z "$(find /var/tmp -mindepth 1 -print -quit 2>/dev/null)"; \
+    test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit 2>/dev/null)"; \
+    if [ -L /etc/machine-id ]; then \
+      machine_id_target="$(readlink /etc/machine-id)"; \
+      case "$machine_id_target" in \
+        /run/machine-id|../run/machine-id) ;; \
+        *) echo "unexpected /etc/machine-id symlink: $machine_id_target" >&2; exit 1 ;; \
+      esac; \
+    elif [ -e /etc/machine-id ]; then \
+      machine_id="$(cat /etc/machine-id 2>/dev/null || true)"; \
+      case "$machine_id" in \
+        ''|uninitialized) ;; \
+        *) echo 'initialized machine-id must not be baked into KrisOS' >&2; exit 1 ;; \
+      esac; \
+    fi; \
     authselect check; \
     bootc container lint --fatal-warnings

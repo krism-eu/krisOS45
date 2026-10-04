@@ -26,6 +26,45 @@ class ReleaseShell(unittest.TestCase):
         self.assertNotIn(r'status" \n        "python3', source)
         self.assertIn('check "deployment identity matches independent bootc status" "python3', source)
 
+    def test_boot_check_normalizes_quoted_ostree_value(self):
+        source = (ROOT / 'tests/boot-check.sh').read_text()
+        self.assertIn('if [[ "$deploy_path" == \\"*\\" ]]; then', source)
+        self.assertIn('deploy_path="${deploy_path#\\"}"', source)
+        self.assertIn('deploy_path="${deploy_path%\\"}"', source)
+        self.assertIn('[[ "$deploy_path" =~ ^/ostree/boot\\.[01]/', source)
+
+    def test_release_check_accepts_verified_recovery_boot(self):
+        source = (ROOT / 'tests/release-check.sh').read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            check = root / 'release-check.sh'
+            check.write_text(source)
+
+            boot = root / 'boot-check.sh'
+            boot.write_text('#!/bin/sh\nexit 2\n')
+            boot.chmod(0o755)
+
+            result = subprocess.run(
+                ['/bin/bash', str(check), 'check'],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(
+                result.returncode,
+                0,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                'PASS: base recovery boot checks',
+                result.stdout,
+            )
+            self.assertIn(
+                'KRISOS RECOVERY BOOT CHECKS PASSED',
+                result.stdout,
+            )
+
     def test_overlay_sentinel_targets_real_upperdir(self):
         source = (ROOT / 'tests/release-check.sh').read_text()
         self.assertIn('sentinel_dir="/usr/share/krisos-e2e"', source)

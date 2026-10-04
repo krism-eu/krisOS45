@@ -16,6 +16,18 @@ for token in "${tokens[@]}"; do
     esac
 done
 
+# /proc/cmdline può conservare una coppia bilanciata di virgolette
+# attorno al valore ostree=. Normalizza come krisos-overlay.
+if [[ "$deploy_path" == \"*\" ]]; then
+    deploy_path="${deploy_path#\"}"
+    deploy_path="${deploy_path%\"}"
+fi
+
+ostree_contract=0
+if [[ "$deploy_path" =~ ^/ostree/boot\.[01]/[^/[:space:]]+/[0-9a-f]+/[0-9]+$ ]]; then
+    ostree_contract=1
+fi
+
 check() {
     if eval "$2"; then
         echo "PASS: $1"

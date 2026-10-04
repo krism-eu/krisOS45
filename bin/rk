@@ -35,10 +35,14 @@ USR_MERGE_DIRECTORY_SYMLINKS = {
 # polkit, kernel/dracut policy, etc.).
 PROTECTED_PREFIXES = (
     '/usr/lib/modules',
+    '/usr/lib/firmware',
+    '/usr/lib/grub',
+    '/usr/lib/bootupd',
     '/usr/lib/sysimage',
     '/usr/lib/ostree',
     '/usr/lib/rpm',
     '/usr/share/krisos',
+    '/usr/libexec/krisos',
     '/usr/share/dnf5',
     '/usr/share/pki/rpm-gpg',
     '/usr/lib/sysusers.d',

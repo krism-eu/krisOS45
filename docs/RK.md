@@ -63,7 +63,11 @@ effetti persistenti o di boot fuori dall'upper, tra cui:
 /usr/lib/sysimage
 /usr/lib/ostree
 /usr/lib/modules
+/usr/lib/firmware
+/usr/lib/grub
+/usr/lib/bootupd
 /usr/share/krisos
+/usr/libexec/krisos
 /usr/lib/sysusers.d
 /usr/lib/tmpfiles.d
 /usr/lib/udev
