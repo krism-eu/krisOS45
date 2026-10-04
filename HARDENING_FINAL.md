@@ -12,8 +12,7 @@ This candidate deliberately preserves the original SELinux/home model. The exper
 - Manual installed-host release checks for boot, overlay persistence, deployment identity and recovery drills.
 - Shared `tests/local-hardening-check.sh` used by both local validation and GitHub CI. It resolves the Fedora base to an immutable digest before building; the krisCC adoption candidate build follows the same digest-pinning rule.
 - CI privilege separation:
-  - PR/manual validation is read-only.
-  - main/scheduled publication may publish and keylessly sign an immutable candidate digest, but cannot advance `m1`.
+  - `publish-candidate.yml` is the single GitHub build/validation path for `main`; push, schedule or manual dispatch may publish and keylessly sign an immutable candidate digest, but cannot advance `m1`.
   - `m1` promotion is a separate protected-environment workflow and requires Cosign identity verification before the digest is copied to `m1`; installed-host checks are manual and are not part of automated promotion.
 
 ## Verification in this package
@@ -30,7 +29,7 @@ Run the complete local gate (requires Podman, Skopeo, network access, and the lo
 ./tests/local-hardening-check.sh
 ```
 
-The local gate and GitHub build workflows call the same build/test path rather than maintaining separate build recipes.
+The local gate and the GitHub candidate workflow call the same build/test path rather than maintaining separate build recipes.
 
 ## Stable-promotion environment
 
@@ -43,7 +42,7 @@ from a public repository. `github.token` / `GITHUB_TOKEN` belongs to the
 KrisOS45 workflow repository and must not be treated as a credential for a
 private cross-repository krisCC release. If krisCC becomes private, the fetch
 path must be redesigned around an explicitly authorized least-privilege GitHub
-App/token; fork PR validation cannot depend on a repository secret. The SHA-256
+App/token. The SHA-256
 lock remains the artifact-integrity check regardless of repository visibility.
 
 ## Network-online policy for rk recovery

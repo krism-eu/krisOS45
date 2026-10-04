@@ -131,7 +131,6 @@ Vedi `docs/RELEASE_VALIDATION.md` e `docs/RK.md` per i gate completi.
 .
 ├── .containerignore
 ├── .github/workflows/
-│   ├── build-m1.yml
 │   ├── promote-m1.yml
 │   ├── publish-candidate.yml
 │   └── sync-kriscc.yml

@@ -279,16 +279,9 @@ esac
                         self.assertIn('connection refused', result.stderr)
 
     def test_workflow_release_permissions_and_serialization_contract(self):
-        build = (ROOT / '.github/workflows/build-m1.yml').read_text()
         publish = (ROOT / '.github/workflows/publish-candidate.yml').read_text()
         promote = (ROOT / '.github/workflows/promote-m1.yml').read_text()
         sync = (ROOT / '.github/workflows/sync-kriscc.yml').read_text()
-
-        self.assertIn('permissions:\n  contents: read', build)
-        self.assertIn('group: validate-m1-${{ github.ref }}', build)
-        self.assertNotIn('packages: write', build)
-        self.assertNotIn('id-token: write', build)
-        self.assertIn('pull_request:', build)
 
         self.assertIn('group: publish-m1-candidate', publish)
         self.assertIn("if: github.ref == 'refs/heads/main'", publish)
