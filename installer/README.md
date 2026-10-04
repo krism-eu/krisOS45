@@ -4,7 +4,7 @@ This directory contains the final-candidate installer path for KrisOS45.
 
 ## Goals
 
-- Fedora 45 Anaconda runtime pinned to 45.27-1.fc45, independent from the installed KrisOS payload.
+- Fedora 45 Anaconda runtime resolved from the current Fedora 45 repositories at ISO build time, with all Anaconda subpackages required to share the same NEVR; it remains independent from the installed KrisOS payload.
 - `bootc-generic-iso`, not the legacy `anaconda-iso` path.
 - Embed the exact signed KrisOS45 payload while recording `m1` as the installed system's manual update channel; hardware acceptance is recorded separately.
 - Keep Anaconda storage and user setup interactive and non-destructive.

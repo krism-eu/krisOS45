@@ -2,16 +2,15 @@ FROM quay.io/fedora/fedora-bootc:45
 
 ARG KRISOS_SOURCE_REF
 ARG KRISOS_TARGET_REF
-ARG ANACONDA_NEVR=45.27-1.fc45
 
 # Fedora 45 Anaconda runtime for the recommended bootc-generic-iso image type.
 # The exact validated KrisOS payload reference is written into Anaconda's
 # interactive defaults and embedded into the final ISO.
 RUN dnf install -qy --setopt=install_weak_deps=False \
-    anaconda-${ANACONDA_NEVR} \
-    anaconda-install-env-deps-${ANACONDA_NEVR} \
-    anaconda-install-img-deps-${ANACONDA_NEVR} \
-    anaconda-dracut-${ANACONDA_NEVR} \
+    anaconda \
+    anaconda-install-env-deps \
+    anaconda-install-img-deps \
+    anaconda-dracut \
     dracut-config-generic \
     dracut-network \
     net-tools \
@@ -27,8 +26,10 @@ RUN dnf install -qy --setopt=install_weak_deps=False \
     prefixdevname \
     xorriso \
     isomd5sum \
+    && anaconda_nevr="$(rpm -q --qf '%{VERSION}-%{RELEASE}' anaconda-core)" \
+    && test -n "$anaconda_nevr" \
     && for pkg in anaconda anaconda-core anaconda-gui anaconda-tui anaconda-install-env-deps anaconda-install-img-deps anaconda-dracut; do \
-         test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$pkg")" = "$ANACONDA_NEVR"; \
+         test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$pkg")" = "$anaconda_nevr"; \
        done \
     && grep -Fxq 'Alias=autovt@.service' /usr/lib/systemd/system/anaconda-shell@.service \
     && grep -Fxq 'DefaultInstance=tty2' /usr/lib/systemd/system/anaconda-shell@.service \
@@ -36,8 +37,8 @@ RUN dnf install -qy --setopt=install_weak_deps=False \
     && grep -Fxq 'StandardInput=null' /usr/lib/systemd/system/anaconda-pre.service \
     && dnf clean all
 
-# KrisOS workaround retained from the validated installer lineage: Anaconda
-# 45.27 still invokes shadow-utils chage with -R against /mnt/sysroot. In a
+# KrisOS workaround retained from the validated installer lineage: Fedora 45 Anaconda
+# currently invokes shadow-utils chage with -R against /mnt/sysroot. In a
 # bootc target that can enter the target after libselinux was initialized in
 # the live environment and abort. Keep Anaconda's account semantics but use
 # shadow-utils prefix mode (-P) for target operations.
@@ -94,7 +95,7 @@ RUN mv /usr/share/anaconda/list-harddrives-stub /usr/bin/list-harddrives && \
     ln -sf /lib/systemd/system/anaconda.target /etc/systemd/system/default.target && \
     rm -f /usr/lib/systemd/system-generators/systemd-gpt-auto-generator
 
-# Anaconda 45.27 carries the autovt alias/default instance and logind drop-in.
+# Fedora 45 Anaconda carries the autovt alias/default instance and logind drop-in.
 # Enable the upstream unit so systemd materializes those [Install] contracts;
 # do not recreate either file locally.
 # Fedora 45 ships autovt@.service already redirected to kmsconvt@.service.

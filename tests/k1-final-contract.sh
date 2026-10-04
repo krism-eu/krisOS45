@@ -24,7 +24,9 @@ grep -Fq -- '--build-arg KRISOS_SOURCE_REF="$source_ref"' installer/build-instal
 grep -Fq -- '--build-arg KRISOS_TARGET_REF="$target_ref"' installer/build-installer.sh
 grep -Fq 'ARG KRISOS_SOURCE_REF' installer/Containerfile
 grep -Fq 'ARG KRISOS_TARGET_REF' installer/Containerfile
-grep -Fq 'ARG ANACONDA_NEVR=45.27-1.fc45' installer/Containerfile
+! grep -Fq 'ANACONDA_NEVR' installer/Containerfile
+grep -Fq 'anaconda-install-env-deps' installer/Containerfile
+grep -Fq 'anaconda_nevr=' installer/Containerfile
 grep -Fq 'bootc --source-imgref=registry:$KRISOS_SOURCE_REF --target-imgref=$KRISOS_TARGET_REF' installer/Containerfile
 if grep -Eq '^[[:space:]]*(clearpart|autopart|part|partition|logvol|volgroup|user|rootpw|reboot|shutdown)([[:space:]]|$)' installer/Containerfile; then
   echo "ERROR: installer container bakes unattended/destructive directives" >&2
