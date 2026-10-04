@@ -22,8 +22,8 @@ M0 valida una sola cosa: il lifecycle del nostro overlay `/usr`.
   `work/` vengono ricreati vuoti e viene armato `needs-sync`.
 - Se setup o mount falliscono, il servizio termina con successo e il boot
   continua sulla `/usr` immutabile.
-- Nessun package wrapper e nessun sync RPM in M0.
-- Nessun codice custom nell'initramfs.
+- M0 descrive il solo lifecycle dell’overlay; nell’immagine M1 attuale il ripristino RPM è gestito separatamente da `rk` e `krisos-sync`.
+- Nessun codice custom dell'overlay nell'initramfs; l'initramfs include solo il piccolo modulo `krisos-nss` necessario a garantire la risoluzione account nel boot Fedora.
 
 Questa collocazione è intenzionale. In initrd il deployment composefs esponeva
 una root preparata con semantiche diverse dalla normale real root; dopo
@@ -39,7 +39,7 @@ Lo stato specifico del progetto vive in `/var/lib/krisos/`:
 /var/lib/krisos/
 ├── packages.list   # M1: richieste RPM esplicite dell'utente
 ├── deployment      # identità OSTree per cui upper/ è valido
-├── pending         # M1: transazione RPM interrotta da ricostruire al boot
+├── pending         # M1: rebuild richiesto o transazione RPM interrotta
 ├── needs-sync      # M1: marker per ricostruire i pacchetti richiesti
 ├── lock            # lock transazionale rk
 ├── upper/          # cache OverlayFS ricostruibile
@@ -88,13 +88,13 @@ immutabile, anche soltanto sotto `/usr` e senza cambio kernel, invalida la cache
 Un'identità assente o diversa, una recovery `pending`, oppure `upper/`/`work/`
 mancanti o non-directory producono la stessa ricostruzione della cache:
 
-1. elimina completamente `upper/` e `work/`;
-2. se il wipe fallisce, non monta l'overlay e continua sulla base;
-3. ricrea `upper/` e `work/` e crea `needs-sync`;
-4. rende durevole lo stato ricostruito con `sync -f /var/lib/krisos`;
+1. crea `needs-sync` e rende durevole l’intento di recovery con `sync -f /var/lib/krisos`;
+2. elimina completamente `upper/` e `work/`;
+3. se il wipe o la ricreazione falliscono, non monta l’overlay e continua sulla base lasciando `needs-sync` persistente;
+4. ricrea `upper/` e `work/`, elimina l’eventuale marker `pending` e rende durevole lo stato ricostruito;
 5. copia sulla radice di `upper/` il contesto SELinux della `/usr` immutabile;
-6. monta l'overlay persistente su `/usr`;
-7. registra la nuova identità solo dopo un mount riuscito.
+6. monta l’overlay persistente su `/usr`;
+7. pubblica il marker runtime e registra la nuova identità solo dopo un mount riuscito.
 
 `needs-sync` viene armato anche al first boot. In M0 il factory `packages.list`
 è vuoto e il marker è innocuo; in M1 segnalerà che le richieste esplicite vanno
@@ -147,7 +147,9 @@ La policy già congelata per M1 è:
   richieste esplicite;
 - nessun upgrade periodico autonomo dei pacchetti overlay sullo stesso
   deployment; `krisos-sync.timer` ritenta soltanto recovery con `needs-sync`;
-- `rk rm` usa una vera transazione DNF/RPM, senza pseudo-autoremove.
+- `rk rm` usa una vera transazione DNF/RPM, senza pseudo-autoremove;
+- `rk refresh` può armare manualmente un rebuild al reboot soltanto dopo un
+  controllo read-only delle richieste contro i repository correnti.
 
 Il wrapper implementa la protezione transazionale additive-only e rifiuta
 payload con effetti non supportati fuori da `/usr`; la policy resta

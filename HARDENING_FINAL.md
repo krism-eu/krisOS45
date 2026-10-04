@@ -1,6 +1,6 @@
 # KrisOS45 hardening — consolidated candidate
 
-Base: original KrisOS45 snapshot at commit `613c430b2c7894778d76da085ddb0d206e201ee8`.
+Historical origin: the hardening work started from commit `613c430b2c7894778d76da085ddb0d206e201ee8`; the release candidate must always be validated from the current reviewed repository state, not reconstructed from that snapshot.
 
 This candidate deliberately preserves the original SELinux/home model. The experimental SELinux/store/order changes introduced in failed intermediate candidates are not included.
 
@@ -48,8 +48,8 @@ lock remains the artifact-integrity check regardless of repository visibility.
 
 ## Network-online policy for rk recovery
 
-`krisos-sync.service` orders after and wants `network-online.target`, but the
-image intentionally does not enable `NetworkManager-wait-online.service`. A slow
+`krisos-sync.service` orders after and wants `network-online.target`, while the
+image explicitly disables `NetworkManager-wait-online.service`. A slow
 or unavailable network can therefore make the first sync attempt fail; recovery
 remains fail-safe and convergent through the service restart policy and the
 10-minute retry timer. This avoids adding disconnected-network boot latency. If

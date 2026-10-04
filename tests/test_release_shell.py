@@ -23,7 +23,7 @@ class ReleaseShell(unittest.TestCase):
 
     def test_boot_check_deployment_crosscheck_has_no_literal_backslash_n_command(self):
         source = (ROOT / 'tests/boot-check.sh').read_text()
-        self.assertNotIn('status" \n        "python3', source)
+        self.assertNotIn(r'status" \n        "python3', source)
         self.assertIn('check "deployment identity matches independent bootc status" "python3', source)
 
     def test_overlay_sentinel_targets_real_upperdir(self):
@@ -165,6 +165,80 @@ esac
                         else:
                             self.assertIn('Opened adoption PR: https://github.com/example/krisos/pull/1', output)
 
+
+    def test_promotion_ancestry_gate_blocks_rollback_unless_explicitly_allowed(self):
+        block = self.workflow_run_block('.github/workflows/promote-m1.yml', 'Enforce promotion ancestry')
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            skopeo = directory / 'skopeo'
+            skopeo.write_text('''#!/bin/sh
+last=''
+for arg in "$@"; do last="$arg"; done
+case "$last" in
+  *krisos45:m1)
+    case "$LINEAGE_MODE" in
+      missing) echo 'manifest unknown' >&2; exit 1 ;;
+      network) echo 'connection refused' >&2; exit 1 ;;
+    esac
+    case " $* " in
+      *' --format '*) printf '%s\n' "$CURRENT_REV" ;;
+      *) printf '{}\n' ;;
+    esac
+    ;;
+  *@sha256:*)
+    case " $* " in
+      *' --format '*) printf '%s\n' "$CANDIDATE_REV" ;;
+      *) printf '{}\n' ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+''')
+            git = directory / 'git'
+            git.write_text('''#!/bin/sh
+case "$1" in
+  cat-file) exit 0 ;;
+  merge-base)
+    case "$LINEAGE_MODE" in
+      descendant) exit 0 ;;
+      rollback) exit 1 ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+''')
+            skopeo.chmod(0o755)
+            git.chmod(0o755)
+            current = 'a' * 40
+            candidate = 'b' * 40
+            digest = 'sha256:' + 'c' * 64
+            cases = (
+                ('descendant', 'false', 0),
+                ('rollback', 'false', 1),
+                ('rollback', 'true', 0),
+                ('missing', 'false', 0),
+                ('network', 'false', 1),
+            )
+            for mode, allow, expected in cases:
+                with self.subTest(mode=mode, allow=allow):
+                    result = subprocess.run(
+                        ['bash', '-c', block], cwd=directory,
+                        env={**os.environ, 'PATH': str(directory) + ':' + os.environ['PATH'],
+                             'RUNNER_TEMP': str(directory), 'HOME': str(directory),
+                             'CANDIDATE_DIGEST': digest, 'ALLOW_ROLLBACK': allow,
+                             'CURRENT_REV': current, 'CANDIDATE_REV': candidate,
+                             'LINEAGE_MODE': mode},
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode == 0, expected == 0, result.stderr)
+                    if mode == 'rollback' and allow == 'false':
+                        self.assertIn('Refusing rollback/non-descendant promotion', result.stderr)
+                    if mode == 'missing':
+                        self.assertIn('No existing m1 tag', result.stdout)
+                    if mode == 'network':
+                        self.assertIn('connection refused', result.stderr)
+
     def test_workflow_release_permissions_and_serialization_contract(self):
         build = (ROOT / '.github/workflows/build-m1.yml').read_text()
         publish = (ROOT / '.github/workflows/publish-candidate.yml').read_text()
@@ -185,6 +259,11 @@ esac
         self.assertIn('Publish immutable candidate only', publish)
 
         self.assertIn('environment: stable-promotion', promote)
+        self.assertIn('allow_rollback:', promote)
+        self.assertIn('default: false', promote)
+        self.assertIn('fetch-depth: 0', promote)
+        self.assertIn('git merge-base --is-ancestor', promote)
+        self.assertIn('org.opencontainers.image.revision', promote)
         self.assertIn('cosign verify', promote)
         self.assertIn('target="docker://ghcr.io/krism-eu/krisos45:m1"', promote)
         self.assertLess(promote.index('cosign verify'), promote.index('target="docker://ghcr.io/krism-eu/krisos45:m1"'))

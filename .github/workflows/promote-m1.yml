@@ -7,6 +7,11 @@ on:
         description: "Signed immutable candidate digest (sha256:...)"
         required: true
         type: string
+      allow_rollback:
+        description: "Allow promotion when candidate revision is not a descendant of current m1"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -25,6 +30,11 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Checkout full repository history
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
       - name: Validate immutable digest input
         env:
           CANDIDATE_DIGEST: ${{ inputs.digest }}
@@ -62,6 +72,60 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | skopeo login --authfile "$HOME/.docker/config.json" \
             ghcr.io --username "$GHCR_USER" --password-stdin
 
+      - name: Enforce promotion ancestry
+        env:
+          CANDIDATE_DIGEST: ${{ inputs.digest }}
+          ALLOW_ROLLBACK: ${{ inputs.allow_rollback }}
+        run: |
+          set -euo pipefail
+          authfile="$HOME/.docker/config.json"
+          candidate="docker://ghcr.io/krism-eu/krisos45@${CANDIDATE_DIGEST}"
+          current="docker://ghcr.io/krism-eu/krisos45:m1"
+
+          candidate_rev="$(skopeo inspect --authfile "$authfile" \
+            --format '{{ index .Labels "org.opencontainers.image.revision" }}' "$candidate")"
+          [[ "$candidate_rev" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Candidate image has invalid org.opencontainers.image.revision: $candidate_rev" >&2
+            exit 1
+          }
+          if ! git cat-file -e "${candidate_rev}^{commit}" 2>/dev/null; then
+            echo "Candidate revision ${candidate_rev} is not present in local git history; refusing promotion." >&2
+            exit 1
+          fi
+
+          current_json="${RUNNER_TEMP:-/tmp}/current-m1.json"
+          current_err="${RUNNER_TEMP:-/tmp}/current-m1.err"
+          if skopeo inspect --authfile "$authfile" "$current" >"$current_json" 2>"$current_err"; then
+            current_rev="$(skopeo inspect --authfile "$authfile" \
+              --format '{{ index .Labels "org.opencontainers.image.revision" }}' "$current")"
+            [[ "$current_rev" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "Current m1 has invalid org.opencontainers.image.revision: $current_rev" >&2
+              exit 1
+            }
+            if ! git cat-file -e "${current_rev}^{commit}" 2>/dev/null; then
+              echo "Current m1 revision ${current_rev} is not present in local git history; refusing promotion." >&2
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$current_rev" "$candidate_rev"; then
+              if [[ "$ALLOW_ROLLBACK" != "true" ]]; then
+                echo "Refusing rollback/non-descendant promotion: current=$current_rev candidate=$candidate_rev" >&2
+                exit 1
+              fi
+              echo "Explicit rollback override accepted: current=$current_rev candidate=$candidate_rev"
+            fi
+            printf 'current_revision=%s\ncandidate_revision=%s\nallow_rollback=%s\n' \
+              "$current_rev" "$candidate_rev" "$ALLOW_ROLLBACK" > promotion-lineage.txt
+          else
+            if grep -Eqi 'manifest unknown|name unknown|not found' "$current_err"; then
+              echo "No existing m1 tag; ancestry check skipped."
+              printf 'current_revision=none\ncandidate_revision=%s\nallow_rollback=%s\n' \
+                "$candidate_rev" "$ALLOW_ROLLBACK" > promotion-lineage.txt
+            else
+              cat "$current_err" >&2
+              exit 1
+            fi
+          fi
+
       - name: Advance m1 to the exact verified digest
         env:
           CANDIDATE_DIGEST: ${{ inputs.digest }}
@@ -82,5 +146,6 @@ jobs:
           name: promote-m1-${{ github.run_id }}
           path: |
             cosign-promote-verify.log
+            promotion-lineage.txt
             promoted-m1.digest
           if-no-files-found: ignore

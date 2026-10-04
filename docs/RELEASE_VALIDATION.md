@@ -8,8 +8,10 @@ costruito e firmato da quella branch.
 
 `tests/release-check.sh` riusa `tests/boot-check.sh` e verifica, tra le altre
 cose, SELinux enforcing, hardening sysctl effettivo, immagine bootc attesa,
-krisCC, initramfs/microcode, stato `rk`, timer di retry, `/var/home` e identità
-del deployment.
+krisCC, initramfs/microcode, stato `rk`, timer di retry, `/var/home`, identità
+del deployment e le policy desktop finali (wait-online disabilitato, Bluetooth
+`AutoEnable=false`, niente autostart Back In Time, locale PlasmaLogin, override
+tmpfiles della root read-only e dizionario italiano Sonnet/Hunspell).
 
 L'identità non viene certificata da un solo algoritmo. `boot-check.sh` confronta:
 
@@ -69,11 +71,11 @@ repo Fedora live. Ogni run conserva quindi:
 - `firmware-source-nevra.txt`;
 - `previous-owned-nevra.txt` quando il tag `m1` precedente è disponibile e leggibile;
 - `package-drift.txt`;
+- digest/firma/log del payload pubblicato.
 
 Il confronto prova prima accesso GHCR autenticato con il `GITHUB_TOKEN` della
 build (utile anche con package privati) e ripiega su accesso anonimo. L'assenza
 di un baseline `m1` resta non bloccante e viene annotata nel report.
-- digest/firma/log del payload pubblicato.
 
 Il diff NEVRA è diagnostica e non blocca automaticamente un aggiornamento: la
 review deve stabilire se la deriva è attesa.
@@ -99,17 +101,49 @@ deve adottare un build `fc45` con una trust chain più forte e rimuovere
 La build payload verifica integrità RPM (`rpm -V`), binario, desktop file e
 metadati installati; non avvia krisCC durante il `Containerfile`. Lo smoke runtime
 viene eseguito nei gate adoption/release-check con `--background` e backend Qt
-offscreen. `Hidden=true` nel file autostart significa che l'avvio automatico è
-disabilitato di default; non rende invalida la modalità background, che resta un
-percorso runtime da verificare esplicitamente.
+offscreen. KrisOS non installa un autostart per krisCC: la modalità background
+resta un percorso runtime esplicito, usato dai test e avviabile solo su richiesta.
 
 ## Promotion
 
 `promote-m1.yml` serializza le promotion con una concurrency dedicata e usa
 l'environment `stable-promotion`. La promotion verifica il digest firmato e la
-workflow identity Cosign, quindi copia esattamente quel digest sul tag `m1`.
+workflow identity Cosign. Prima di muovere `m1`, legge
+`org.opencontainers.image.revision` dal candidate e dall'eventuale `m1` corrente,
+fa checkout con history completa e richiede che il commit corrente sia antenato
+del candidate (`git merge-base --is-ancestor`). Se la revision del candidate o
+dell'attuale `m1` non è presente nella history locale (per esempio a causa di un
+force-push), la promotion fallisce con un messaggio esplicito che identifica
+quale delle due revision manca. Se `m1` non esiste ancora il controllo viene
+saltato; errori di registry diversi da una reale assenza restano bloccanti. Un
+rollback/non-descendant è possibile soltanto impostando
+esplicitamente `allow_rollback=true` nel dispatch manuale. Solo dopo questi gate
+viene copiato esattamente il digest sul tag `m1`.
 **Prerequisito operativo della release:** configurare in
 GitHub Settings almeno un required reviewer per quell'environment; la
 dichiarazione YAML da sola non crea una policy di approvazione. La checklist di
 promotion deve considerare non configurata questa protezione finché una run non
 mostra effettivamente lo stato di attesa/approvazione dell'environment.
+
+## Riparazione label SELinux della home
+
+`/usr/libexec/krisos/repair-home-labels` è un tool manuale di recovery, non un
+servizio. Accetta soltanto un utente non-root la cui home canonica sia un figlio
+diretto di `/var/home`; i percorsi mancanti o symlink vengono ignorati. In
+modalità predefinita usa `restorecon -n -v`; `--apply` abilita il ripristino
+reale.
+
+Anteprima senza modifiche:
+
+```bash
+sudo /usr/libexec/krisos/repair-home-labels USER
+```
+
+Applicazione dopo aver verificato l'anteprima:
+
+```bash
+sudo /usr/libexec/krisos/repair-home-labels --apply USER
+```
+
+Il gate `tests/local-hardening-check.sh` esercita il percorso valido e verifica
+che una home annidata sotto `/var/home` venga rifiutata.

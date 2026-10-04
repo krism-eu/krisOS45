@@ -10,6 +10,7 @@ rk plan tree
 sudo rk add tree
 sudo rk rm tree
 sudo rk sync
+sudo rk refresh
 ```
 
 `packages.list` contiene solo le richieste esplicite. La rpmdb e lo state
@@ -90,10 +91,12 @@ modo corretto per osservare questi effetti fuori dal container.
 
 ## Recovery
 
-`pending` viene scritto solo immediatamente prima di una vera transazione RPM.
-Se il processo viene interrotto, al reboot l'hook elimina upper/work, rende
-persistente `needs-sync`, elimina `pending` e ricostruisce le richieste salvate.
-Il package intent viene aggiornato atomicamente soltanto dopo successo.
+`pending` indica che al prossimo boot l'upper corrente non deve essere riutilizzato.
+Viene scritto immediatamente prima di una vera transazione RPM e viene usato anche
+da `rk refresh` per richiedere deliberatamente una ricostruzione. Al reboot l'hook
+elimina upper/work, rende persistente `needs-sync`, elimina `pending` e ricostruisce
+le richieste salvate. Il package intent viene aggiornato atomicamente soltanto dopo
+il successo delle normali transazioni `add`/`rm`/`sync`.
 
 Dopo un cambio deployment, `krisos-sync.service` parte soltanto se esistono sia
 `/var/lib/krisos/needs-sync` sia `/run/krisos/overlay-mounted`. Il relativo
@@ -104,11 +107,42 @@ metadata DNF e non avvia lavoro quando `needs-sync` non esiste.
 ## Aggiornamenti degli RPM overlay
 
 Non esiste un `rk upgrade` automatico. Un pacchetto richiesto può quindi restare
-alla stessa NEVRA finché l'upper corrente rimane valido. Il ciclo supportato per
-rivalutare le richieste contro i repository correnti è la ricostruzione
-successiva a un cambio deployment. Questo compromesso deve essere visibile nella
-UI: gli RPM overlay non hanno una cadenza di security update indipendente dalla
-release immutabile KrisOS.
+alla stessa NEVRA finché l'upper corrente rimane valido. Oltre alla ricostruzione
+causata da un cambio deployment, root può richiedere esplicitamente una
+ricostruzione contro i repository correnti con:
+
+```bash
+sudo rk refresh
+```
+
+`refresh` gira sotto lo stesso lock transazionale di `add`/`rm`, non accetta nomi
+di pacchetto e non scarica né installa RPM. Rifiuta `pending`/`needs-sync`, verifica
+mount e identità della base e controlla che ogni richiesta salvata sia ancora
+disponibile come `x86_64`/`noarch` nei repository abilitati. Non risolve un
+upgrade contro l'overlay corrente, perché dopo il reboot la ricostruzione parte
+dalla base immutabile pulita. Solo dopo questi controlli scrive `pending` e
+richiede il reboot; il normale hook ricrea l'upper e `rk sync` reinstalla le
+richieste.
+
+`refresh` riconcilia anche `packages.list` rimuovendo le richieste che nel
+frattempo sono entrate nella base immutabile. La rimozione avviene dopo i
+controlli di mount/integrità della base ma prima della verifica read-only dei
+repository ed è idempotente: quei nomi non sarebbero comunque più reinstallabili
+da `rk sync`.
+Questa riconciliazione è l'unica modifica persistente che può restare applicata
+anche se la successiva validazione dei repository fallisce. Se dopo la
+riconciliazione non resta alcuna richiesta, `refresh` termina con successo senza
+armare `pending`.
+
+Il controllo pre-reboot **riduce il rischio ma non certifica la ricostruzione**.
+Il preflight verifica disponibilità e architettura dei nomi richiesti, ma non
+risolve il grafo completo che `rk sync` costruirà dalla base immutabile pulita
+dopo il reboot. Se una richiesta non può essere ricostruita, il relativo pacchetto
+può restare assente e
+la recovery rimane in `needs-sync`; in quel caso si correggono i repository oppure
+si usa `sudo rk forget NOME` per rimuovere una richiesta ormai non recuperabile,
+poi `sudo rk sync`. Gli RPM overlay non hanno comunque una cadenza di security
+update automatica indipendente dalla release immutabile KrisOS.
 
 ## Error boundary
 

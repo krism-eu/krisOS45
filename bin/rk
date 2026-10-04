@@ -135,7 +135,7 @@ def guard(allow_pending=False):
         if option not in opts:
             raise RuntimeError(f'Unexpected /usr mount: missing {option}')
     if not allow_pending and (STATE / 'pending').exists():
-        raise RuntimeError('Interrupted transaction requires reboot before rk runs again')
+        raise RuntimeError('A rebuild is pending; reboot before running another rk transaction')
     if output(GETENFORCE) != 'Enforcing' or 'object_r:usr_t:' not in output(LS, '-Zd', '/usr'):
         raise RuntimeError('SELinux must be enforcing and /usr labeled usr_t')
     dbpath = Path(output(RPM, '--eval', '%{_dbpath}')).resolve()
@@ -435,12 +435,101 @@ def forget_requests(requested):
     print('Recovery requests updated; no RPMs removed. Run sudo rk sync to finish recovery.')
 
 
+def refresh_overlay():
+    """Validate saved requests against current repositories, then rebuild on reboot."""
+    owned = owned_names(OWNED.read_text().splitlines())
+    intent = load_intent()
+    if (STATE / 'pending').exists():
+        raise RuntimeError('A rebuild is pending; reboot before running another rk transaction')
+    if (STATE / 'needs-sync').exists():
+        raise RuntimeError('Package recovery is already pending; run sudo rk sync first')
+
+    before = guard()
+    check_base(owned)
+
+    # Reconcile requests that have moved into the immutable image. rk sync
+    # already excludes intent entries now owned by the base, so keeping them in
+    # packages.list would only preserve dead state. This independently valid,
+    # idempotent cleanup happens after mount/base validation and remains valid
+    # even if the subsequent repository solve fails.
+    superseded = intent & owned
+    if superseded:
+        intent -= superseded
+        atomic(
+            STATE / 'packages.list',
+            ''.join(name + '\n' for name in sorted(intent)),
+            mode=0o644,
+        )
+        print(
+            'Dropped requests now provided by the base image: '
+            + ', '.join(sorted(superseded))
+        )
+
+    if not intent:
+        if superseded:
+            print('All requests are now provided by the base image; nothing to refresh.')
+        else:
+            print('No saved package requests; nothing to refresh.')
+        return
+
+    import libdnf5
+    base = libdnf5.base.Base()
+    base.load_config()
+    config = base.get_config()
+    config.plugins = False
+    config.installroot = '/'
+    config.install_weak_deps = False
+    config.clean_requirements_on_remove = False
+    config.excludepkgs = sorted(owned) + ['*.i686']
+    config.tsflags = []
+    config.system_state_dir = '/usr/lib/sysimage/libdnf5'
+    config.pkg_gpgcheck = True
+    config.localpkg_gpgcheck = True
+    base.setup()
+
+    if not base.lock_system_repo():
+        raise RuntimeError('Another package transaction holds the DNF system lock')
+    try:
+        check_base(owned)
+        sack = base.get_repo_sack()
+        sack.create_repos_from_system_configuration()
+        for repo in libdnf5.repo.RepoQuery(base):
+            harden_repo(repo)
+        sack.load_repos()
+
+        installed_names = set(output(RPM, '-qa', '--qf', '%{NAME}\n').splitlines())
+        missing_installed = intent - installed_names
+        if missing_installed:
+            raise RuntimeError('Saved package requests are not installed: ' + ', '.join(sorted(missing_installed)))
+
+        unavailable = []
+        for name in sorted(intent):
+            query = libdnf5.rpm.PackageQuery(base)
+            query.filter_available()
+            query.filter_name(name)
+            if not any(pkg.get_arch() in ('x86_64', 'noarch') for pkg in query):
+                unavailable.append(name)
+        if unavailable:
+            raise RuntimeError('Saved package requests are unavailable in enabled repositories: ' + ', '.join(unavailable))
+
+        if guard() != before or load_intent() != intent:
+            raise RuntimeError('KrisOS state changed during refresh validation; retry')
+        if (STATE / 'pending').exists() or (STATE / 'needs-sync').exists():
+            raise RuntimeError('KrisOS recovery state changed during refresh validation; retry')
+        check_base(owned)
+        atomic(STATE / 'pending', 'Refresh requested: rebuild overlay after reboot\n')
+        sync_dir(STATE)
+        print('Refresh armed. Reboot to rebuild the overlay with current repositories.')
+    finally:
+        base.unlock_system_repo()
+
+
 def transact(command, requested, dry_run=False):
     import libdnf5
     owned = owned_names(OWNED.read_text().splitlines())
     intent = load_intent()
     if (STATE / 'pending').exists():
-        raise RuntimeError('Interrupted transaction requires reboot before rk runs again')
+        raise RuntimeError('A rebuild is pending; reboot before running another rk transaction')
     if command != 'sync' and (STATE / 'needs-sync').exists():
         raise RuntimeError('Run rk sync first; if an unavailable request blocks recovery, use sudo rk forget NAME, then sudo rk sync')
     if command == 'add' and requested & owned:
@@ -602,7 +691,7 @@ def show_status(json_output=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('add', 'rm', 'sync', 'status', 'plan', 'forget'))
+    parser.add_argument('command', choices=('add', 'rm', 'sync', 'status', 'plan', 'forget', 'refresh'))
     parser.add_argument('packages', nargs='*')
     parser.add_argument('--json', action='store_true', help='emit versioned JSON for status')
     args = parser.parse_args()
@@ -610,7 +699,7 @@ def main():
         parser.error('--json is only valid with status')
     takes_packages = args.command in ('add', 'rm', 'plan', 'forget')
     if bool(args.packages) != takes_packages:
-        parser.error('add/rm/plan/forget require package names; sync/status take no packages')
+        parser.error('add/rm/plan/forget require package names; sync/status/refresh take no packages')
     requested = names(args.packages)
     if args.command == 'status':
         show_status(json_output=args.json)
@@ -631,11 +720,12 @@ def main():
         load_intent()
         if args.command == 'forget':
             forget_requests(requested)
+        elif args.command == 'refresh':
+            refresh_overlay()
         else:
             transact(args.command, requested)
     finally:
         os.close(lock)
-
 
 
 def _single_line_error(error):

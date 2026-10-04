@@ -57,6 +57,34 @@ class RecoveryIntent(unittest.TestCase):
             rk.forget_requests({'missing-app'})
         self.assertIn('missing-app', (self.root / 'packages.list').read_text())
 
+
+    def test_refresh_rejects_needs_sync_without_writing_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('keep-app\n')
+            (state / 'needs-sync').touch()
+            owned = state / 'owned'
+            owned.write_text('base\n')
+            with mock.patch.object(rk, 'STATE', state), mock.patch.object(rk, 'OWNED', owned), \
+                    self.assertRaisesRegex(RuntimeError, 'recovery is already pending'):
+                rk.refresh_overlay()
+            self.assertTrue((state / 'needs-sync').exists())
+            self.assertFalse((state / 'pending').exists())
+
+    def test_refresh_rejects_pending_without_changing_recovery_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('keep-app\n')
+            pending = state / 'pending'
+            pending.write_text('existing recovery\n')
+            owned = state / 'owned'
+            owned.write_text('base\n')
+            before = pending.read_bytes()
+            with mock.patch.object(rk, 'STATE', state), mock.patch.object(rk, 'OWNED', owned), \
+                    self.assertRaisesRegex(RuntimeError, 'A rebuild is pending; reboot'):
+                rk.refresh_overlay()
+            self.assertEqual(pending.read_bytes(), before)
+
     def test_missing_provisioning_has_actionable_error(self):
         (self.root / 'packages.list').unlink()
         with self.assertRaisesRegex(RuntimeError, 'systemd-tmpfiles'):

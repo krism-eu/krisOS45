@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import tempfile
 import types
+import sys
 import unittest
 from unittest import mock
 
@@ -59,6 +60,72 @@ class FakeRepo:
 
     def get_config(self):
         return self.config
+
+
+def fake_libdnf5_for_refresh(available=True, repo_error=None):
+    class Config:
+        pass
+
+    class Sack:
+        def create_repos_from_system_configuration(self):
+            pass
+
+        def load_repos(self):
+            if repo_error is not None:
+                raise RuntimeError(repo_error)
+
+    class Base:
+        def __init__(self):
+            self.config = Config()
+            self.sack = Sack()
+            self.unlocked = False
+
+        def load_config(self):
+            pass
+
+        def get_config(self):
+            return self.config
+
+        def setup(self):
+            pass
+
+        def lock_system_repo(self):
+            return True
+
+        def unlock_system_repo(self):
+            self.unlocked = True
+
+        def get_repo_sack(self):
+            return self.sack
+
+    class Package:
+        def __init__(self, name='tree', arch='x86_64'):
+            self.name = name
+            self.arch = arch
+
+        def get_arch(self):
+            return self.arch
+
+    class PackageQuery:
+        def __init__(self, base):
+            self.name = None
+
+        def filter_available(self):
+            pass
+
+        def filter_name(self, name):
+            self.name = name
+
+        def __iter__(self):
+            return iter([Package(self.name or 'tree')] if available else [])
+
+    # Deliberately no Goal implementation: refresh must only inspect repository
+    # availability, never solve an upgrade against the current overlay state.
+    return types.SimpleNamespace(
+        base=types.SimpleNamespace(Base=Base),
+        repo=types.SimpleNamespace(RepoQuery=lambda base: []),
+        rpm=types.SimpleNamespace(PackageQuery=PackageQuery),
+    )
 
 
 class Policy(unittest.TestCase):
@@ -196,6 +263,159 @@ class Policy(unittest.TestCase):
         rk.validate_plan([('tree', 'x86_64', 'Install'), ('data', 'noarch', 'Install')], {'glibc'}, set())
         rk.validate_plan([('tree', 'x86_64', 'Remove')], {'glibc'}, {'tree'})
 
+
+    def test_refresh_cli_is_root_only(self):
+        with mock.patch.object(sys, 'argv', ['/usr/bin/rk', 'refresh']), \
+                mock.patch.object(rk.os, 'geteuid', return_value=1000), \
+                mock.patch.object(rk, 'refresh_overlay') as refresh, \
+                self.assertRaisesRegex(RuntimeError, 'Run with sudo'):
+            rk.main()
+        refresh.assert_not_called()
+
+    def test_refresh_cli_runs_under_transaction_lock(self):
+        with mock.patch.object(sys, 'argv', ['/usr/bin/rk', 'refresh']), \
+                mock.patch.object(rk.os, 'geteuid', return_value=0), \
+                mock.patch.object(rk, 'open_transaction_lock', return_value=123) as open_lock, \
+                mock.patch.object(rk, 'acquire_transaction_lock') as acquire, \
+                mock.patch.object(rk, 'guard'), \
+                mock.patch.object(rk, 'load_intent'), \
+                mock.patch.object(rk, 'refresh_overlay') as refresh, \
+                mock.patch.object(rk.os, 'close') as close:
+            rk.main()
+        open_lock.assert_called_once_with()
+        acquire.assert_called_once_with(123)
+        refresh.assert_called_once_with()
+        close.assert_called_once_with(123)
+
+    def test_refresh_unavailable_request_does_not_write_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('tree\n')
+            owned = state / 'owned'
+            owned.write_text('base\n')
+            module = fake_libdnf5_for_refresh(available=False)
+            with mock.patch.object(rk, 'STATE', state), \
+                    mock.patch.object(rk, 'OWNED', owned), \
+                    mock.patch.object(rk, 'guard', return_value='mount'), \
+                    mock.patch.object(rk, 'check_base'), \
+                    mock.patch.object(rk, 'output', return_value='tree'), \
+                    mock.patch.dict(sys.modules, {'libdnf5': module}), \
+                    self.assertRaisesRegex(RuntimeError, 'unavailable in enabled repositories'):
+                rk.refresh_overlay()
+            self.assertFalse((state / 'pending').exists())
+
+    def test_refresh_repository_load_failure_does_not_write_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('tree\n')
+            owned = state / 'owned'
+            owned.write_text('base\n')
+            module = fake_libdnf5_for_refresh(repo_error='repository offline')
+            with mock.patch.object(rk, 'STATE', state), \
+                    mock.patch.object(rk, 'OWNED', owned), \
+                    mock.patch.object(rk, 'guard', return_value='mount'), \
+                    mock.patch.object(rk, 'check_base'), \
+                    mock.patch.object(rk, 'output', return_value='tree'), \
+                    mock.patch.dict(sys.modules, {'libdnf5': module}), \
+                    self.assertRaisesRegex(RuntimeError, 'repository offline'):
+                rk.refresh_overlay()
+            self.assertFalse((state / 'pending').exists())
+
+    def test_refresh_drops_requests_now_owned_by_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('tree\nnowbase\n')
+            owned = state / 'owned'
+            owned.write_text('base\nnowbase\n')
+            module = fake_libdnf5_for_refresh()
+            stream = io.StringIO()
+            with mock.patch.object(rk, 'STATE', state), \
+                    mock.patch.object(rk, 'OWNED', owned), \
+                    mock.patch.object(rk, 'guard', return_value='mount'), \
+                    mock.patch.object(rk, 'check_base'), \
+                    mock.patch.object(rk, 'output', return_value='tree'), \
+                    mock.patch.dict(sys.modules, {'libdnf5': module}), \
+                    redirect_stdout(stream):
+                rk.refresh_overlay()
+            self.assertEqual((state / 'packages.list').read_text(), 'tree\n')
+            self.assertEqual((state / 'pending').read_text(),
+                             'Refresh requested: rebuild overlay after reboot\n')
+            self.assertIn('Dropped requests now provided by the base image: nowbase',
+                          stream.getvalue())
+
+    def test_refresh_when_all_requests_are_owned_does_not_arm_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('nowbase\n')
+            owned = state / 'owned'
+            owned.write_text('nowbase\n')
+            stream = io.StringIO()
+            with mock.patch.object(rk, 'STATE', state), \
+                    mock.patch.object(rk, 'OWNED', owned), \
+                    mock.patch.object(rk, 'guard', return_value='mount'), \
+                    mock.patch.object(rk, 'check_base') as check_base, \
+                    redirect_stdout(stream):
+                rk.refresh_overlay()
+            self.assertEqual((state / 'packages.list').read_text(), '')
+            self.assertFalse((state / 'pending').exists())
+            self.assertIn('nothing to refresh', stream.getvalue())
+            check_base.assert_called_once_with({'nowbase'})
+
+    def test_refresh_empty_intent_has_neutral_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('')
+            owned = state / 'owned'
+            owned.write_text('base\n')
+            stream = io.StringIO()
+            with mock.patch.object(rk, 'STATE', state), \
+                    mock.patch.object(rk, 'OWNED', owned), \
+                    mock.patch.object(rk, 'guard', return_value='mount'), \
+                    mock.patch.object(rk, 'check_base'), \
+                    redirect_stdout(stream):
+                rk.refresh_overlay()
+            self.assertFalse((state / 'pending').exists())
+            self.assertIn('No saved package requests; nothing to refresh.', stream.getvalue())
+            self.assertNotIn('provided by the base image', stream.getvalue())
+
+    def test_refresh_owned_drop_persists_if_repository_check_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('tree\nnowbase\n')
+            owned = state / 'owned'
+            owned.write_text('base\nnowbase\n')
+            module = fake_libdnf5_for_refresh(available=False)
+            with mock.patch.object(rk, 'STATE', state), \
+                    mock.patch.object(rk, 'OWNED', owned), \
+                    mock.patch.object(rk, 'guard', return_value='mount'), \
+                    mock.patch.object(rk, 'check_base'), \
+                    mock.patch.object(rk, 'output', return_value='tree'), \
+                    mock.patch.dict(sys.modules, {'libdnf5': module}), \
+                    self.assertRaisesRegex(RuntimeError, 'unavailable in enabled repositories'):
+                rk.refresh_overlay()
+            self.assertEqual((state / 'packages.list').read_text(), 'tree\n')
+            self.assertFalse((state / 'pending').exists())
+
+    def test_refresh_success_writes_private_pending_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'packages.list').write_text('tree\n')
+            owned = state / 'owned'
+            owned.write_text('base\n')
+            module = fake_libdnf5_for_refresh()
+            stream = io.StringIO()
+            with mock.patch.object(rk, 'STATE', state), \
+                    mock.patch.object(rk, 'OWNED', owned), \
+                    mock.patch.object(rk, 'guard', return_value='mount'), \
+                    mock.patch.object(rk, 'check_base'), \
+                    mock.patch.object(rk, 'output', return_value='tree'), \
+                    mock.patch.dict(sys.modules, {'libdnf5': module}), \
+                    redirect_stdout(stream):
+                rk.refresh_overlay()
+            pending = state / 'pending'
+            self.assertEqual(pending.read_text(), 'Refresh requested: rebuild overlay after reboot\n')
+            self.assertEqual(pending.stat().st_mode & 0o777, 0o600)
+            self.assertIn('Refresh armed. Reboot', stream.getvalue())
 
     def test_check_base_reports_expected_and_observed_nevra(self):
         with tempfile.TemporaryDirectory() as directory, \
@@ -521,7 +741,7 @@ class Policy(unittest.TestCase):
                 mock.patch.object(rk, 'STATE', Path(directory)), \
                 mock.patch.object(rk, 'output', side_effect=guard_output):
             (Path(directory) / 'pending').write_text('recover\n')
-            with self.assertRaisesRegex(RuntimeError, 'Interrupted transaction requires reboot'):
+            with self.assertRaisesRegex(RuntimeError, 'A rebuild is pending; reboot'):
                 rk.guard()
 
     def test_status_remains_readable_during_pending_recovery(self):

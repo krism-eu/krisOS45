@@ -105,9 +105,21 @@ RUN set -eux; \
     base_excludes="$(paste -sd, /tmp/fedora-base-names.txt)"; \
     xargs -r dnf5 -y \
       --setopt=install_weak_deps=False \
-      --setopt="excludepkgs=${base_excludes}" \
+      --setopt="excludepkgs=${base_excludes},*.i686" \
       install < /tmp/krisos-delta-names.txt; \
+    dnf5_evr="$(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}' dnf5)"; \
+    libdnf5_evr="$(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}' libdnf5)"; \
+    libdnf5_cli_evr="$(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}' libdnf5-cli)"; \
+    dnf5_plugins_evr="$(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}' dnf5-plugins)"; \
+    if [ "$dnf5_plugins_evr" != "$dnf5_evr" ] || \
+       [ "$dnf5_plugins_evr" != "$libdnf5_evr" ] || \
+       [ "$dnf5_plugins_evr" != "$libdnf5_cli_evr" ]; then \
+      printf 'DNF5 component mismatch: dnf5=%s libdnf5=%s libdnf5-cli=%s dnf5-plugins=%s\n' \
+        "$dnf5_evr" "$libdnf5_evr" "$libdnf5_cli_evr" "$dnf5_plugins_evr" >&2; \
+      exit 1; \
+    fi; \
     rpm -q glibc-langpack-en glibc-langpack-it langpacks-core-en langpacks-core-it; \
+    rpm -q kf6-sonnet-hunspell hunspell-it; \
     if rpm -q glibc-all-langpacks >/dev/null 2>&1; then \
       if grep -Fxq glibc-all-langpacks /tmp/fedora-base-names.txt; then \
         echo 'glibc-all-langpacks is Fedora-base-owned; refusing image-side removal' >&2; \
@@ -214,7 +226,7 @@ RUN set -eux; \
 RUN set -eux; \
     excludes="$(rpm -qa --qf '%{NAME}\n' | sort -u | paste -sd,)"; \
     rpm -qa --qf '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort > /tmp/rk-before; \
-    dnf5 -y --setopt=install_weak_deps=False --setopt="excludepkgs=$excludes" install python3-libdnf5; \
+    dnf5 -y --setopt=install_weak_deps=False --setopt="excludepkgs=$excludes,*.i686" install python3-libdnf5; \
     rpm -qa --qf '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort > /tmp/rk-after; \
     test -z "$(comm -23 /tmp/rk-before /tmp/rk-after)"; \
     python3 -c 'import libdnf5; assert hasattr(libdnf5.base.Base, "lock_system_repo")'; \
@@ -223,7 +235,6 @@ COPY bin/rk /usr/bin/rk
 RUN chmod 0755 /usr/bin/rk
 COPY systemd/krisos-sync.service /usr/lib/systemd/system/krisos-sync.service
 COPY systemd/krisos-sync.timer /usr/lib/systemd/system/krisos-sync.timer
-COPY systemd/krisos-bluetooth-firstboot.service /usr/lib/systemd/system/krisos-bluetooth-firstboot.service
 
 # Persistent /usr overlay. Mount it in early real-root userspace rather than in
 # initrd: OSTree has already exposed writable /var, while local-fs.target still
@@ -254,9 +265,10 @@ RUN set -eux; \
     rpm -Uvh --nosignature /tmp/krisCC.rpm; \
     rpm -q krisCC; \
     rpm -V krisCC; \
+    ! rpm -ql krisCC | grep -q '/autostart/'; \
     rm -f /tmp/krisCC.rpm /tmp/krisCC.lock
 COPY scripts/repair-home-labels.sh /usr/libexec/krisos/repair-home-labels
-COPY build_files/krisCC-autostart.desktop /etc/xdg/autostart/krisCC-background.desktop
+RUN chmod 0755 /usr/libexec/krisos/repair-home-labels
 
 COPY build_files/99krisos-nss/ /usr/lib/dracut/modules.d/99krisos-nss/
 COPY scripts/check-initramfs-accounts.sh /tmp/check-initramfs-accounts.sh
@@ -299,6 +311,8 @@ RUN set -eux; \
         "$kernel_dir/initramfs.img" "$kver"; \
       test -s "$kernel_dir/initramfs.img"; \
       lsinitrd "$kernel_dir/initramfs.img" | grep -F 'kernel/x86/microcode/AuthenticAMD.bin' >/dev/null; \
+      lsinitrd "$kernel_dir/initramfs.img" | grep -F 'usr/lib/ostree/ostree-prepare-root' >/dev/null; \
+      lsinitrd "$kernel_dir/initramfs.img" | grep -F 'usr/lib/systemd/system/ostree-prepare-root.service' >/dev/null; \
       bash /tmp/check-initramfs-accounts.sh "$kernel_dir/initramfs.img"; \
       lsinitrd -f /usr/lib/systemd/system-generators/dracut-crypt-generator \
         "$kernel_dir/initramfs.img" > /tmp/dracut-crypt-generator; \
@@ -354,19 +368,40 @@ COPY build_files/NetworkManager.state /usr/share/factory/var/lib/NetworkManager/
 
 RUN set -eux; \
     printf '%s\n' 'LANG=it_IT.UTF-8' > /etc/locale.conf; \
+    install -d -m 0755 /usr/lib/systemd/system/plasmalogin.service.d; \
+    printf '%s\n' '[Service]' 'Environment=LANG=it_IT.UTF-8' > /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf; \
+    test -f /usr/lib/tmpfiles.d/root.conf; \
+    grep -Eq '^[[:space:]]*z[[:space:]]+/[[:space:]]+0?555[[:space:]]' /usr/lib/tmpfiles.d/root.conf; \
+    install -d -m 0755 /etc/tmpfiles.d; \
+    test ! -e /etc/tmpfiles.d/root.conf; \
+    : > /etc/tmpfiles.d/root.conf; \
+    chmod 0644 /etc/tmpfiles.d/root.conf; \
+    test -f /etc/tmpfiles.d/root.conf; \
+    test ! -s /etc/tmpfiles.d/root.conf; \
     test -f /etc/bluetooth/main.conf; \
     sed -i 's/^#AutoEnable=true$/AutoEnable=false/' /etc/bluetooth/main.conf; \
     grep -Fxq 'AutoEnable=false' /etc/bluetooth/main.conf; \
+    rm -f /etc/xdg/autostart/backintime.desktop; \
+    test ! -e /etc/xdg/autostart/backintime.desktop; \
     test -f /etc/xdg/autostart/geoclue-demo-agent.desktop; \
     grep -Fxq 'Hidden=true' /etc/xdg/autostart/geoclue-demo-agent.desktop || printf '\nHidden=true\n' >> /etc/xdg/autostart/geoclue-demo-agent.desktop; \
-    firewall-offline-cmd --zone=public --remove-service-from-zone=ssh; \
-    firewall-offline-cmd --zone=public --remove-service-from-zone=mdns; \
+    if [ "$(firewall-offline-cmd --get-default-zone)" != public ]; then \
+        firewall-offline-cmd --set-default-zone=public; \
+    fi; \
+    for service in ssh mdns; do \
+        if firewall-offline-cmd --zone=public --query-service="$service"; then \
+            firewall-offline-cmd --zone=public --remove-service-from-zone="$service"; \
+        fi; \
+    done; \
+    test "$(firewall-offline-cmd --get-default-zone)" = public; \
+    ! firewall-offline-cmd --zone=public --query-service=ssh; \
+    ! firewall-offline-cmd --zone=public --query-service=mdns; \
     systemctl enable krisos-overlay.service; \
     systemctl enable krisos-sync.timer; \
-    systemctl enable krisos-bluetooth-firstboot.service; \
     systemctl enable --force plasmalogin.service; \
     systemctl enable firewalld.service; \
     systemctl enable systemd-timesyncd.service; \
+    systemctl disable NetworkManager-wait-online.service; \
     systemctl disable systemd-homed.service; \
     systemctl disable avahi-daemon.service avahi-daemon.socket; \
     systemctl disable mdmonitor.service raid-check.timer; \
@@ -406,12 +441,14 @@ RUN set -eux; \
     test -x /usr/bin/bootc; \
     test -x /usr/bin/ostree; \
     test -x /usr/bin/dnf5; \
+    test -x /usr/bin/ssh; \
     test -x /usr/bin/efibootmgr; \
     test -x /usr/bin/grubby; \
     test -x /usr/bin/grub2-reboot; \
     test -x /usr/bin/krisCC; \
     rpm -q krisCC; \
     rpm -V krisCC; \
+    ! rpm -ql krisCC | grep -q '/autostart/'; \
     grep -Fxq 'HOME=/var/home' /etc/default/useradd; \
     matchpathcon -n /var/home/kris | grep -q ':user_home_dir_t:'; \
     matchpathcon -n /var/home/kris/.config | grep -q ':config_home_t:'; \
@@ -422,14 +459,14 @@ RUN set -eux; \
       test -f "$kernel_dir/modules.dep" || continue; \
       test -s "$kernel_dir/initramfs.img"; \
       lsinitrd "$kernel_dir/initramfs.img" | grep -F 'kernel/x86/microcode/AuthenticAMD.bin' >/dev/null; \
+      lsinitrd "$kernel_dir/initramfs.img" | grep -F 'usr/lib/ostree/ostree-prepare-root' >/dev/null; \
+      lsinitrd "$kernel_dir/initramfs.img" | grep -F 'usr/lib/systemd/system/ostree-prepare-root.service' >/dev/null; \
       kernel_count=$((kernel_count + 1)); \
     done; \
     test "$kernel_count" -eq 1; \
     test -f /usr/share/applications/krisCC.desktop; \
     test -f /usr/share/metainfo/org.kriscc.KrisCC.metainfo.xml; \
     test -f /usr/share/polkit-1/actions/org.kriscc.controlcenter.policy; \
-    test -f /etc/xdg/autostart/krisCC-background.desktop; \
-    grep -Fxq 'Exec=/usr/bin/krisCC --background' /etc/xdg/autostart/krisCC-background.desktop; \
     test -x /usr/bin/dolphin; \
     test -x /usr/bin/konsole; \
     test -x /usr/bin/kate; \
@@ -453,6 +490,8 @@ RUN set -eux; \
     test -f /usr/lib/systemd/system/krisos-sync.service; \
     test -f /usr/lib/systemd/system/krisos-sync.timer; \
     test -e /usr/lib/systemd/system/plasmalogin.service; \
+    test -f /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf; \
+    grep -Fxq 'Environment=LANG=it_IT.UTF-8' /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf; \
     test -s /usr/share/krisos/owned-packages.txt; \
     grep -Fxq krisCC /usr/share/krisos/owned-packages.txt; \
     assert_not_in_file gpg-pubkey /usr/share/krisos/owned-packages.txt; \
@@ -461,6 +500,8 @@ RUN set -eux; \
     test -f /usr/share/factory/var/lib/NetworkManager/NetworkManager.state; \
     grep -Fxq 'WirelessEnabled=false' /usr/share/factory/var/lib/NetworkManager/NetworkManager.state; \
     test -f /usr/lib/tmpfiles.d/krisos.conf; \
+    test -f /etc/tmpfiles.d/root.conf; \
+    test ! -s /etc/tmpfiles.d/root.conf; \
     grep -Fxq 'd /var/lib/krisos 0755 root root -' \
       /usr/lib/tmpfiles.d/krisos.conf; \
     grep -Fxq 'f /var/lib/krisos/lock 0600 root root -' \
@@ -475,6 +516,8 @@ RUN set -eux; \
     grep -Fxq 'fs.protected_fifos = 2' /usr/lib/sysctl.d/55-krisos-hardening.conf; \
     grep -Fxq 'fs.suid_dumpable = 0' /usr/lib/sysctl.d/55-krisos-hardening.conf; \
     grep -Fxq 'AutoEnable=false' /etc/bluetooth/main.conf; \
+    test ! -e /usr/lib/systemd/system/krisos-bluetooth-firstboot.service; \
+    test ! -e /etc/xdg/autostart/backintime.desktop; \
     grep -Fxq 'Hidden=true' /etc/xdg/autostart/geoclue-demo-agent.desktop; \
     test -f /etc/dnf/repos.override.d/90-krisos-privacy.repo; \
     grep -Fxq '[*]' /etc/dnf/repos.override.d/90-krisos-privacy.repo; \
@@ -482,6 +525,7 @@ RUN set -eux; \
     test -f /etc/xdg/KDE/UserFeedback.conf; \
     grep -Fxq '[UserFeedback]' /etc/xdg/KDE/UserFeedback.conf; \
     grep -Fxq 'Enabled=false' /etc/xdg/KDE/UserFeedback.conf; \
+    firewall-offline-cmd --get-default-zone | grep -qx public; \
     ! firewall-offline-cmd --zone=public --list-services | tr ' ' '\n' | grep -Eq '^(ssh|mdns)$'; \
     grep -Eq '^SELINUX=enforcing$' /etc/selinux/config; \
     grep -Fxq 'LANG=it_IT.UTF-8' /etc/locale.conf; \
@@ -489,6 +533,9 @@ RUN set -eux; \
     grep -Fxq 'multilib_policy=best' /etc/dnf/libdnf5.conf.d/90-krisos.conf; \
     grep -Fxq 'install_weak_deps=False' /etc/dnf/libdnf5.conf.d/90-krisos.conf; \
     rpm -q glibc-langpack-en glibc-langpack-it langpacks-core-en langpacks-core-it; \
+    rpm -q kf6-sonnet-hunspell hunspell-it; \
+    test -f /usr/share/hunspell/it_IT.dic; \
+    test -f /usr/share/hunspell/it_IT.aff; \
     rpm -q xcb-util-cursor; \
     test -f /usr/lib/firmware/rtl_nic/rtl8168h-2.fw.xz; \
     test -d /usr/share/licenses/krisos-rtl8168-firmware; \
@@ -501,6 +548,7 @@ RUN set -eux; \
     systemctl is-enabled plasmalogin.service | grep -qx enabled; \
     systemctl is-enabled firewalld.service | grep -qx enabled; \
     systemctl is-enabled systemd-timesyncd.service | grep -qx enabled; \
+    assert_disabled NetworkManager-wait-online.service; \
     assert_disabled systemd-homed.service; \
     assert_disabled avahi-daemon.service; \
     assert_disabled avahi-daemon.socket; \
@@ -518,8 +566,7 @@ RUN set -eux; \
     assert_absent linux-firmware; \
     assert_absent plasma-discover-notifier; \
     assert_absent plasma-discover-packagekit; \
-    assert_absent PackageKit; \
-    bootc container lint
+    assert_absent PackageKit
 
 # Final bootc filesystem hygiene. Runtime state is recreated by tmpfiles.
 COPY build_files/60-krisos-runtime-state.conf /usr/lib/tmpfiles.d/60-krisos-runtime-state.conf

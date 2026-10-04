@@ -258,13 +258,16 @@ if ! mount -t overlay overlay \
     exit 0
 fi
 
-# From here on, avoid spawning helpers from the freshly overlaid /usr. Shell
-# builtins are enough to publish readiness, record state and finish safely.
+# Publish readiness and the new deployment identity only after the overlay is
+# mounted. The identity write is followed by a filesystem sync so a power loss
+# immediately after mount does not cause an avoidable rebuild on the next boot.
 if ! : > "$overlay_ready"; then
     log "WARNING: overlay mounted, but readiness marker could not be created; automatic sync disabled for this boot"
 fi
 if ! printf '%s\n' "$deployment_id" > "$saved"; then
     log "WARNING: mounted, but deployment identity could not be persisted"
+elif ! /usr/bin/sync -f "$state"; then
+    log "WARNING: deployment identity not durable"
 fi
 
 log "mounted for $deployment_id"

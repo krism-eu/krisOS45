@@ -13,7 +13,7 @@ NEW_COMMIT = "c" * 64
 
 
 class OverlayIdentity(unittest.TestCase):
-    def prepare(self, saved_commit, target_commit, deployserial="0", chcon_status=0, mount_status=0, mounts_text="", pending=False, needs_sync=False, missing_upper=False, missing_work=False):
+    def prepare(self, saved_commit, target_commit, deployserial="0", chcon_status=0, mount_status=0, sync_status=0, mounts_text="", pending=False, needs_sync=False, missing_upper=False, missing_work=False):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -47,7 +47,7 @@ class OverlayIdentity(unittest.TestCase):
 
         bindir = root / "bin"
         bindir.mkdir()
-        for name, status in (("chcon", chcon_status), ("mount", mount_status)):
+        for name, status in (("chcon", chcon_status), ("mount", mount_status), ("sync", sync_status)):
             stub = bindir / name
             stub.write_text(f"#!/bin/sh\nexit {status}\n")
             stub.chmod(0o755)
@@ -57,6 +57,7 @@ class OverlayIdentity(unittest.TestCase):
         text = text.replace("/proc/cmdline", str(cmdline))
         text = text.replace("/proc/mounts", str(mounts))
         text = text.replace("/ostree/", str(ostree) + "/")
+        text = text.replace("/usr/bin/sync", str(bindir / "sync"))
         text = text.replace("state=/var/lib/krisos", f"state={state}")
         text = text.replace("runtime=/run/krisos", f"runtime={runtime}")
         hook.write_text(text)
@@ -91,6 +92,12 @@ class OverlayIdentity(unittest.TestCase):
             (state / "deployment").read_text().strip(), f"default/{NEW_COMMIT}/0"
         )
 
+    def test_post_mount_deployment_sync_failure_is_warned_but_mount_stays_ready(self):
+        result, state, sentinel, runtime = self.prepare(NEW_COMMIT, NEW_COMMIT, sync_status=1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("deployment identity not durable", result.stdout)
+        self.assertTrue((runtime / "overlay-mounted").exists())
+        self.assertEqual((state / "deployment").read_text().strip(), f"default/{NEW_COMMIT}/0")
 
     def test_same_deployment_missing_upper_rebuilds_cache_and_arms_sync(self):
         result, state, sentinel, runtime = self.prepare(NEW_COMMIT, NEW_COMMIT, missing_upper=True)

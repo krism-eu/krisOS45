@@ -39,11 +39,48 @@ test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontain
 test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')" = 'https://github.com/krism-eu/krisOS45'
 test "$(podman inspect "$tag" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$source_revision"
 
-say 'Bluetooth first-boot invariant'
+say 'Desktop startup policy invariants'
 podman run --rm --entrypoint /usr/bin/bash "$tag" -lc '
   set -euo pipefail
-  test -x /usr/bin/rfkill
-  systemctl is-enabled krisos-bluetooth-firstboot.service | grep -qx enabled
+  grep -Fxq "AutoEnable=false" /etc/bluetooth/main.conf
+  test ! -e /usr/lib/systemd/system/krisos-bluetooth-firstboot.service
+  systemctl is-enabled NetworkManager-wait-online.service 2>&1 | grep -qx disabled
+  test ! -e /etc/xdg/autostart/backintime.desktop
+  test -f /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
+  grep -Fxq "Environment=LANG=it_IT.UTF-8" /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
+  test -f /etc/tmpfiles.d/root.conf
+  test ! -s /etc/tmpfiles.d/root.conf
+  rpm -q kf6-sonnet-hunspell hunspell-it >/dev/null
+'
+
+say 'repair-home-labels functional contract'
+podman run --rm --security-opt label=disable --entrypoint /usr/bin/bash "$tag" -lc '
+  set -euo pipefail
+  printf "krisrepair:x:42420:42420::/var/home/krisrepair:/usr/sbin/nologin\n" >> /etc/passwd
+  printf "krisrepairbad:x:42421:42421::/var/home/nested/krisrepairbad:/usr/sbin/nologin\n" >> /etc/passwd
+  mkdir -p /var/home/krisrepair/.config /var/home/krisrepair/.local/share /var/home/nested/krisrepairbad
+  mkdir -p /tmp/repair-home-labels-bin
+  cat > /tmp/repair-home-labels-bin/restorecon <<"EOF"
+#!/bin/sh
+printf "%s\n" "$*" >> /tmp/repair-home-labels.calls
+EOF
+  chmod 0755 /tmp/repair-home-labels-bin/restorecon
+  PATH=/tmp/repair-home-labels-bin:$PATH /usr/libexec/krisos/repair-home-labels krisrepair
+  test "$(wc -l < /tmp/repair-home-labels.calls)" -eq 4
+  grep -Fxq -- "-v -n -- /var/home/krisrepair" /tmp/repair-home-labels.calls
+  grep -Fxq -- "-v -n -- /var/home/krisrepair/.config" /tmp/repair-home-labels.calls
+  grep -Fxq -- "-v -n -- /var/home/krisrepair/.local" /tmp/repair-home-labels.calls
+  grep -Fxq -- "-v -n -- /var/home/krisrepair/.local/share" /tmp/repair-home-labels.calls
+  : > /tmp/repair-home-labels.calls
+  PATH=/tmp/repair-home-labels-bin:$PATH /usr/libexec/krisos/repair-home-labels --apply krisrepair
+  test "$(wc -l < /tmp/repair-home-labels.calls)" -eq 4
+  grep -Fxq -- "-v -- /var/home/krisrepair" /tmp/repair-home-labels.calls
+  ! grep -Fq -- "-n" /tmp/repair-home-labels.calls
+  if PATH=/tmp/repair-home-labels-bin:$PATH /usr/libexec/krisos/repair-home-labels krisrepairbad >/tmp/repair-home-labels.bad 2>&1; then
+    echo "nested home unexpectedly accepted" >&2
+    exit 1
+  fi
+  grep -Fq "Home must resolve to a direct child of /var/home." /tmp/repair-home-labels.bad
 '
 
 say 'Regression suite dentro la stessa immagine'

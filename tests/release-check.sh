@@ -84,6 +84,17 @@ run_check "PackageKit omitted" bash -c '! rpm -q PackageKit >/dev/null 2>&1'
 run_check "Cockpit installed" rpm -q cockpit
 run_check "Cockpit socket disabled by default" bash -c 'systemctl is-enabled cockpit.socket 2>&1 | grep -qx disabled'
 run_check "DNF weak dependencies disabled" grep -Fxq 'install_weak_deps=False' /etc/dnf/libdnf5.conf.d/90-krisos.conf
+run_check "NetworkManager wait-online disabled" bash -c 'systemctl is-enabled NetworkManager-wait-online.service 2>&1 | grep -qx disabled'
+run_check "firewalld default zone is public" bash -c 'firewall-cmd --get-default-zone | grep -qx public'
+run_check "Bluetooth native default-off policy" grep -Fxq 'AutoEnable=false' /etc/bluetooth/main.conf
+run_check "obsolete Bluetooth firstboot helper absent" test ! -e /usr/lib/systemd/system/krisos-bluetooth-firstboot.service
+run_check "Back In Time autostart absent" test ! -e /etc/xdg/autostart/backintime.desktop
+run_check "PlasmaLogin locale drop-in present" test -f /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
+run_check "PlasmaLogin locale is Italian UTF-8" grep -Fxq 'Environment=LANG=it_IT.UTF-8' /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
+run_check "tmpfiles root rule masked for read-only root" bash -c 'test -f /etc/tmpfiles.d/root.conf && test ! -s /etc/tmpfiles.d/root.conf'
+run_check "Sonnet Hunspell backend installed" rpm -q kf6-sonnet-hunspell
+run_check "Italian Hunspell dictionary installed" rpm -q hunspell-it
+run_check "Italian Hunspell dictionary payload present" test -f /usr/share/hunspell/it_IT.dic
 
 run_check "useradd default points to /var/home" grep -Fxq 'HOME=/var/home' /etc/default/useradd
 run_check "SELinux /var/home user context" bash -c "matchpathcon -n /var/home/kris | grep -q ':user_home_dir_t:'"
@@ -93,6 +104,8 @@ run_check "SELinux data context below /var/home" bash -c "matchpathcon -n /var/h
 kernel_image="/usr/lib/modules/$(uname -r)/initramfs.img"
 run_check "canonical initramfs present" test -s "$kernel_image"
 run_check "AMD early microcode embedded" bash -c "lsinitrd '$kernel_image' | grep -F 'kernel/x86/microcode/AuthenticAMD.bin' >/dev/null"
+run_check "OSTree prepare-root binary embedded" bash -c "lsinitrd '$kernel_image' | grep -F 'usr/lib/ostree/ostree-prepare-root' >/dev/null"
+run_check "OSTree prepare-root service embedded" bash -c "lsinitrd '$kernel_image' | grep -F 'usr/lib/systemd/system/ostree-prepare-root.service' >/dev/null"
 
 expected_admin_user="${KRISOS_EXPECT_ADMIN_USER:-}"
 if [[ -n "$expected_admin_user" ]]; then

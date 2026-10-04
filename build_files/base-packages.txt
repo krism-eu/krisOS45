@@ -72,6 +72,7 @@ backintime-qt
 
 # Network firewall. Fedora 45's plasma-firewall package currently pulls both
 # backend plugins; KrisOS deliberately enables firewalld only. firewalld
+
 # uses the kernel nftables stack and is the supported runtime backend.
 plasma-firewall
 firewalld
@@ -145,8 +146,12 @@ breeze-icon-theme
 kf6-breeze-icons
 breeze-cursor-theme
 
-# Locales: English + Italian only; never glibc-all-langpacks.
+# Locales and spell checking: English + Italian only; never glibc-all-langpacks.
+# kf6-sonnet-hunspell is the KDE/Sonnet Hunspell backend; hunspell-it supplies
+# the it_IT dictionary used by Sonnet and Plasma's text input.
 glibc-langpack-en
 glibc-langpack-it
 langpacks-core-en
 langpacks-core-it
+kf6-sonnet-hunspell
+hunspell-it

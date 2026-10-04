@@ -3,6 +3,7 @@ Description=Restore requested KrisOS packages on the current deployment
 Wants=network-online.target
 After=multi-user.target krisos-overlay.service network-online.target
 ConditionPathExists=/var/lib/krisos/needs-sync
+ConditionPathExists=!/var/lib/krisos/pending
 ConditionPathExists=/run/krisos/overlay-mounted
 ConditionKernelCommandLine=!krisos.overlay=off
 StartLimitIntervalSec=10min

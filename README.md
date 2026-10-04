@@ -30,7 +30,7 @@ Il mount avviene in real-root userspace dopo `ostree-remount.service` e prima di
 /var/lib/krisos/
 ├── deployment      # stateroot/OSTREE_COMMIT/DEPLOYSERIAL
 ├── packages.list   # richieste RPM esplicite dell'utente
-├── pending         # transazione RPM interrotta, se presente
+├── pending         # rebuild richiesto o transazione RPM interrotta
 ├── needs-sync      # ricostruzione package layer richiesta
 ├── lock            # lock di rk
 ├── upper/          # cache OverlayFS ricostruibile
@@ -65,10 +65,12 @@ file speciali, setuid/setgid e `%{FILECAPS}` sono rifiutati, così non possono
 usare un percorso apparentemente innocuo per uscire da `/usr` o raggiungere un
 namespace protetto.
 
-Gli RPM overlay non hanno un timer di upgrade autonomo. Il ciclo supportato per
-rivalutare le versioni richieste è la ricostruzione dell'upper dopo un cambio
-deployment. `krisos-sync.timer` non è un refresh DNF: ritenta soltanto una
-ricostruzione già richiesta da `needs-sync`.
+Gli RPM overlay non hanno un timer di upgrade autonomo. Le versioni richieste
+vengono rivalutate quando l'upper viene ricostruito dopo un cambio deployment o
+quando root arma manualmente `sudo rk refresh`; quest'ultimo valida prima, senza
+modifiche RPM, le richieste contro i repository correnti e poi usa `pending` per
+forzare il rebuild al reboot. `krisos-sync.timer` non è un refresh DNF: ritenta
+soltanto una ricostruzione già richiesta da `needs-sync`.
 
 ## Cadenza immagini
 
@@ -77,7 +79,10 @@ Durante Fedora 45 Branched una build automatica ogni due giorni segue la Minimal
 percorso di pubblicazione, produce e firma un candidate immutabile. Il tag mobile
 `ghcr.io/krism-eu/krisos45:m1` non viene aggiornato automaticamente: avanza solo
 tramite `promote-m1.yml`, dopo autorizzazione dell'environment protetto e verifica
-Cosign del digest firmato. I controlli su host installato restano manuali e
+Cosign del digest firmato. La promotion confronta inoltre le label
+`org.opencontainers.image.revision` e accetta normalmente solo candidate il cui
+commit discende da quello dell'attuale `m1`; un rollback richiede l'input manuale
+esplicito `allow_rollback=true`. I controlli su host installato restano manuali e
 separati dalla promotion. Il sistema installato non si aggiorna da solo:
 `bootc-fetch-apply-updates.timer` è mascherato nell'immagine e l'utente decide
 quando eseguire l'update. Dopo Fedora 45 stable la build candidate passa a
@@ -145,7 +150,6 @@ Vedi `docs/RELEASE_VALIDATION.md` e `docs/RK.md` per i gate completi.
 │   ├── NetworkManager.state
 │   ├── base-packages.txt
 │   ├── dnf-krisos.conf
-│   ├── krisCC-autostart.desktop
 │   ├── krisCC.lock
 │   └── tmpfiles-krisos.conf
 ├── docs/
@@ -160,7 +164,6 @@ Vedi `docs/RELEASE_VALIDATION.md` e `docs/RK.md` per i gate completi.
 │   ├── repair-home-labels.sh
 │   └── resolve-base.sh
 ├── systemd/
-│   ├── krisos-bluetooth-firstboot.service
 │   ├── krisos-overlay.service
 │   ├── krisos-overlay.sh
 │   ├── krisos-sync.service
@@ -181,6 +184,27 @@ Vedi `docs/RELEASE_VALIDATION.md` e `docs/RK.md` per i gate completi.
 └── tools/
     └── source_snapshot.py
 ```
+
+## Riparazione manuale delle label SELinux della home
+
+L'immagine installa `/usr/libexec/krisos/repair-home-labels` come strumento
+manuale e conservativo per diagnosticare o ripristinare le label SELinux sui
+quattro percorsi persistenti già previsti dalla policy KrisOS: `$HOME`,
+`$HOME/.config`, `$HOME/.local` e `$HOME/.local/share`.
+
+La home dell'utente deve risolversi direttamente sotto `/var/home`; una home
+annidata o non canonica viene rifiutata. Senza `--apply` lo script usa
+`restorecon -n -v` e mostra soltanto l'anteprima. La modifica reale richiede
+root:
+
+```bash
+sudo /usr/libexec/krisos/repair-home-labels USER
+sudo /usr/libexec/krisos/repair-home-labels --apply USER
+```
+
+Non è un servizio e non viene eseguito automaticamente al boot. Il gate
+container esercita il percorso di anteprima valido e il rifiuto di una home
+annidata.
 
 ## Recovery
 
