@@ -44,7 +44,7 @@ podman run --rm --entrypoint /usr/bin/bash "$tag" -lc '
   set -euo pipefail
   grep -Fxq "AutoEnable=false" /etc/bluetooth/main.conf
   test ! -e /usr/lib/systemd/system/krisos-bluetooth-firstboot.service
-  systemctl is-enabled NetworkManager-wait-online.service 2>&1 | grep -qx disabled
+  test "$(systemctl is-enabled NetworkManager-wait-online.service 2>/dev/null || :)" = disabled
   test ! -e /etc/xdg/autostart/backintime.desktop
   test -f /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
   grep -Fxq "Environment=LANG=it_IT.UTF-8" /usr/lib/systemd/system/plasmalogin.service.d/10-krisos-locale.conf
